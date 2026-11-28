@@ -31,6 +31,7 @@ from meridian.lib.launch.resolve import (
     resolve_startup_timeout_seconds,
 )
 from meridian.lib.launch.session_scope import session_scope, warm_close_imports
+from meridian.lib.launch.spawn_prepare import prepare_spawn
 from meridian.lib.launch.streaming_runner import run_streaming_spawn
 from meridian.lib.ops.runtime import OperationRuntime
 from meridian.lib.ops.spawn.execute_init import build_spawn_mars_runtime
@@ -96,7 +97,8 @@ async def streaming_serve(
 
     # Prepare before creating a row so invalid requests leave no spawn state.
     with LaunchSlot() as launch_lock:
-        prepared = await spawn_service.prepare_spawn(
+        prepared = await prepare_spawn(
+            spawn_service,
             request=spawn_req,
             runtime=launch_runtime,
             harness_registry=get_default_harness_registry(),

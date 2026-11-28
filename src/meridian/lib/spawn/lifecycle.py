@@ -13,9 +13,11 @@ from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.spawn_lifecycle import is_terminal_spawn_status
 from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.platform.signals import signal_coordinator
+from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.session_identity import spawn_owner_chat_id
+from meridian.lib.state.spawn.repository import Applied, Declined
 from meridian.lib.telemetry import LifecycleCorrelation, bind_lifecycle_correlation
 from meridian.lib.telemetry.lifecycle import (
     CORE_EVENTS,
@@ -36,6 +38,7 @@ if TYPE_CHECKING:
     from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
     from meridian.lib.state.spawn.model import (
         LaunchMode,
+        PersistedSpawnStatus,
         SpawnOrigin,
         SpawnRecord,
     )
@@ -80,15 +83,7 @@ def _pid_created_at_epoch(pid: int | None) -> float | None:
         return None
 
 
-def _spawn_store() -> Any:
-    # An eager import cycles through state initialization.
-    from meridian.lib.state import spawn_store
-
-    return spawn_store
-
-
 def _locked_mutation_snapshot(outcome: LockedMutationResult) -> SpawnRecord | None:
-    from meridian.lib.state.spawn.repository import Applied, Declined
 
     if isinstance(outcome, Applied):
         return outcome.after
@@ -193,7 +188,7 @@ class SpawnLifecycleService:
     def announce(self, spawn_id: str) -> None:
         """Dispatch spawn.created (a first launch only) and spawn.started for a launch's row."""
         with bind_lifecycle_correlation(self._correlation(operation="announce", spawn_id=spawn_id)):
-            record = _spawn_store().get_spawn(self._runtime_root, spawn_id)
+            record = spawn_store.get_spawn(self._runtime_root, spawn_id)
             if record is None:
                 raise ValueError(f"spawn row not found: {spawn_id}")
             self._record = record
@@ -210,7 +205,7 @@ class SpawnLifecycleService:
             self._correlation(operation="start", spawn_id=reservation.spawn_id)
         ):
             session_metadata = reservation.session_metadata
-            launch = _spawn_store().start_spawn(
+            launch = spawn_store.start_spawn(
                 self._runtime_root,
                 chat_id=reservation.chat_id,
                 owner_chat_id=reservation.owner_chat_id,
@@ -242,7 +237,7 @@ class SpawnLifecycleService:
                 launch_lock=launch_lock,
             )
             allocate_spawn_sequence(str(launch.spawn_id))
-            record = _spawn_store().get_spawn(self._runtime_root, launch.spawn_id)
+            record = spawn_store.get_spawn(self._runtime_root, launch.spawn_id)
             self._record = record
             if dispatch_events:
                 self._dispatch_spawn_started_events(status=reservation.status)
@@ -262,15 +257,15 @@ class SpawnLifecycleService:
         ``desc`` and ``work_id`` replace the spawn's own only when set. Dispatches
         ``spawn.started`` (never ``spawn.created``).
         """
-        store = _spawn_store()
+
         handle = launch_lock.handle
         with bind_lifecycle_correlation(
             self._correlation(operation="reopen", spawn_id=str(handle.spawn_id))
         ):
-            row = store.reopen_spawn(
+            row = spawn_store.reopen_spawn(
                 handle,
                 self._runtime_root,
-                store.LaunchInput(
+                spawn_store.LaunchInput(
                     chat_id=reservation.chat_id,
                     prompt=reservation.prompt,
                     kind=reservation.kind,
@@ -296,9 +291,9 @@ class SpawnLifecycleService:
                 self._dispatch_spawn_started_events(status=row.status)
             return row
 
-    def _dispatch_spawn_started_events(self, *, status: SpawnStatus) -> None:
+    def _dispatch_spawn_started_events(self, *, status: PersistedSpawnStatus) -> None:
         assert self._record is not None
-        if self._record.launch_number == _spawn_store().FIRST_LAUNCH:
+        if self._record.launch_number == spawn_store.FIRST_LAUNCH:
             event = self._build_event("spawn.created", self._record)
             self._dispatch(event)
             self._emit_telemetry_event("spawn.created", self._record)
@@ -323,7 +318,7 @@ class SpawnLifecycleService:
             resolved_runner_created_at_epoch = runner_created_at_epoch
             if runner_pid is not None and resolved_runner_created_at_epoch is None:
                 resolved_runner_created_at_epoch = _pid_created_at_epoch(runner_pid)
-            outcome = _spawn_store().record_spawn_launch_facts(
+            outcome = spawn_store.record_spawn_launch_facts(
                 self._runtime_root,
                 spawn_id,
                 launch_mode=launch_mode,
@@ -342,7 +337,7 @@ class SpawnLifecycleService:
         ):
             self._emit_telemetry_event(
                 "spawn.process_exited",
-                _spawn_store().get_spawn(self._runtime_root, spawn_id),
+                spawn_store.get_spawn(self._runtime_root, spawn_id),
                 payload={"exit_code": exit_code},
             )
 
@@ -379,7 +374,7 @@ class SpawnLifecycleService:
             # Defer termination until the durable outcome and finished hooks land;
             # otherwise a completed launch can read as crashed or miss its hook.
             with signal_coordinator().mask_termination():
-                outcome = _spawn_store().finalize_spawn(
+                outcome = spawn_store.finalize_spawn(
                     self._runtime_root,
                     spawn_id,
                     status,
@@ -393,7 +388,6 @@ class SpawnLifecycleService:
                     expected_n=expected_n,
                     clock=clock,
                 )
-                from meridian.lib.state.spawn.repository import Applied
 
                 if isinstance(outcome, Applied):
                     snapshot = outcome.after
@@ -453,7 +447,7 @@ class SpawnLifecycleService:
     def bootstrap_from_disk(self, spawn_id: str) -> SpawnRecord | None:
         """Load owner state once for workers that did not call start()."""
 
-        self._record = _spawn_store().get_spawn(
+        self._record = spawn_store.get_spawn(
             self._runtime_root,
             spawn_id,
         )

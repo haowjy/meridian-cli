@@ -81,6 +81,8 @@ from meridian.lib.state.spawn_aggregate import (
     sync_retirement_parents,
 )
 from meridian.lib.state.spawn_observations import clear_wait_pin
+from meridian.lib.telemetry.lifecycle import LifecycleEvent, next_spawn_sequence
+from meridian.lib.telemetry.observers import notify_observers
 from meridian.plugin_api.types import SpawnKind
 
 logger = structlog.get_logger(__name__)
@@ -610,8 +612,6 @@ def update_spawn(
     )
     if not isinstance(outcome, Applied):
         return
-    from meridian.lib.telemetry.lifecycle import LifecycleEvent, next_spawn_sequence
-    from meridian.lib.telemetry.observers import notify_observers
 
     record = outcome.after
     notify_observers(

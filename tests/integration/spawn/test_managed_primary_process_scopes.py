@@ -346,6 +346,11 @@ def test_reaper_preserve_then_reclaim_reuses_same_scope_records(
             skip_reason=None,
         )
 
+    # The reaper terminates the claimed launcher; reclaim terminates the session scopes.
+    monkeypatch.setattr(
+        "meridian.lib.spawn.reaper.terminate_scope_sync",
+        _fake_terminate_scope_sync,
+    )
     monkeypatch.setattr(
         "meridian.lib.spawn.cleanup.terminate_scope_sync",
         _fake_terminate_scope_sync,

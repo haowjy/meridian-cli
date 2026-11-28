@@ -4,6 +4,7 @@ This module defines the canonical environment-to-context translation used by
 launch, ops, and child-environment composition paths.
 """
 
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,7 @@ from meridian.lib.core.depth import (
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state import paths as state_paths
 from meridian.lib.state import session_store, spawn_store, work_store
+from meridian.lib.state.runtime_root import environment_runtime_root
 from meridian.lib.state.spawn.repository import SpawnStateNewer
 from meridian.lib.state.work_scope import WorkScope, resolve_work_scope_from_parts
 from meridian.lib.state.work_state import warn_missing_work_item
@@ -102,10 +104,6 @@ class ResolvedContext:
         same rule as ``ops/runtime.py``), else derived from ``project_root`` identity
         into user state.
         """
-
-        import os
-
-        from meridian.lib.state.runtime_root import environment_runtime_root
 
         env = os.environ if environ is None else environ
         backend_impl = backend or LocalFilesystemBackend()

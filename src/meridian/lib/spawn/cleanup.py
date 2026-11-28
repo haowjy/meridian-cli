@@ -6,6 +6,7 @@ vs preserve, delegates to platform-specific backends, logs results.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Collection
 from pathlib import Path
 
@@ -30,13 +31,17 @@ from meridian.lib.state.process_scope_projection import (
     read_scopes_from_disk,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn.repository import (
+    SpawnStateQuarantined,
+    iter_spawn_ids,
+    read_state,
+)
+from meridian.lib.state.spawn_store import SpawnScan
 
 logger = structlog.get_logger(__name__)
 
 
 def _wait_for_scope_exit(scope: ProcessScopeSnapshot, *, timeout: float) -> None:
-
-    import time
 
     deadline = time.monotonic() + max(0.0, timeout)
     while True:
@@ -403,13 +408,6 @@ def reclaim_session_owned_scopes_for_chats(
     skipped. ``held`` is the runner's own handle, used for its own spawn because a second
     ``acquire`` in the same process would find it Busy and skip its own scopes.
     """
-
-    from meridian.lib.state.spawn.repository import (
-        SpawnStateQuarantined,
-        iter_spawn_ids,
-        read_state,
-    )
-    from meridian.lib.state.spawn_store import SpawnScan
 
     selected = frozenset(chat_ids)
     if not selected:

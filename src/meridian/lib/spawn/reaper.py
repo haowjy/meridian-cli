@@ -19,6 +19,7 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.platform.locking import lock_file, try_lock_file
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
+from meridian.lib.platform.process_scope.dispatch import terminate_scope_sync
 from meridian.lib.state.history_index import HistoryIndex, HistoryIndexIncomplete
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.primary_meta import PrimaryMetadata, read_primary_metadata
@@ -117,7 +118,6 @@ def resolve_cleanup_claim(runtime_root: Path, record: SpawnRecord) -> None:
         claimed = read_cleanup_claim(runtime_root, spawn_id)
         if not claimed:
             return
-        from meridian.lib.spawn.cleanup import terminate_scope_sync
 
         unresolved: list[ProcessScopeSnapshot] = []
         for scope in claimed:

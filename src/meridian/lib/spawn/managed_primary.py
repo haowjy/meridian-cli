@@ -7,7 +7,11 @@ from pathlib import Path
 import psutil
 
 from meridian.lib.core.types import SpawnId
-from meridian.lib.state.liveness import is_process_alive_with_birth
+from meridian.lib.spawn.cleanup import (
+    cancel_managed_primary,
+    terminate_recorded_spawn_scopes,
+)
+from meridian.lib.state.liveness import is_process_alive_with_birth, is_process_dead_with_birth
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.primary_meta import PrimaryMetadata, read_primary_metadata
 from meridian.lib.state.spawn.model import SpawnRecord
@@ -79,12 +83,6 @@ def tear_down_dead_launch(
     unknown. Each step's grace is the time left before ``until`` (monotonic).
     """
 
-    # Lazy to avoid a state -> core import cycle: core.process_cleanup imports state.
-    from meridian.lib.spawn.cleanup import (
-        cancel_managed_primary,
-        terminate_recorded_spawn_scopes,
-    )
-
     managed = metadata.managed_backend if metadata is not None else managed_if_unrecorded
     if managed:
         terminate_managed_primary_processes(metadata, include_launcher=False)
@@ -104,8 +102,6 @@ def release_managed_primary_scopes(
     managed_if_unrecorded: bool,
 ) -> None:
     """Tear down a terminal managed-primary orphan once its runner is gone."""
-
-    from meridian.lib.state.liveness import is_process_dead_with_birth
 
     if not is_process_dead_with_birth(record.runner_pid, record.runner_created_at_epoch):
         return

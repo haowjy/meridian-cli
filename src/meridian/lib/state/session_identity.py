@@ -5,8 +5,10 @@ from pathlib import Path
 
 from meridian.lib.core.types import SpawnId, normalize_optional_identity
 from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.liveness import scope_liveness
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.primary_meta import read_primary_harness_session_id
+from meridian.lib.state.process_scope_projection import read_scope_projection
 from meridian.lib.state.session_store import SessionRecord
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_status import quarantine_may_observe
@@ -147,8 +149,6 @@ def live_observer_for_chat(
     records: Iterable[SpawnRecord] | None = None,
     excluding_spawn_id: str | None = None,
 ) -> str | None:
-    from meridian.lib.state.liveness import scope_liveness
-    from meridian.lib.state.process_scope_projection import read_scope_projection
 
     if records is None:
         scan = spawn_store.list_spawns(runtime_root)

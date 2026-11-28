@@ -95,7 +95,7 @@ def test_runner_finalize_between_reaper_snapshot_and_cleanup_preserves_scope(
         runner_wins_then_claim,
     )
     monkeypatch.setattr(
-        "meridian.lib.spawn.cleanup.terminate_scope_sync",
+        "meridian.lib.spawn.reaper.terminate_scope_sync",
         lambda *_args, **_kwargs: kill_calls.append("worker"),
     )
 
@@ -118,7 +118,7 @@ def test_double_reconcile_does_not_double_kill_claimed_scope(
         terminated.append(claimed.release_id)
         return _cleanup_result(claimed)
 
-    monkeypatch.setattr("meridian.lib.spawn.cleanup.terminate_scope_sync", terminate)
+    monkeypatch.setattr("meridian.lib.spawn.reaper.terminate_scope_sync", terminate)
     stale = _record(runtime_root, spawn_id)
 
     with ThreadPoolExecutor(max_workers=2) as executor:

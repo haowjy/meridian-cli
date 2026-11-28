@@ -121,7 +121,7 @@ async def test_cancel_descendants_rescans_for_newly_appearing_descendant(
             _start_descendant(runtime_root, "p3", parent_id="p2")
         return original_active_descendants(runtime_root_arg, root_id)
 
-    monkeypatch.setattr(spawn_tree, "active_descendants", active_descendants)
+    monkeypatch.setattr("meridian.lib.spawn.service.active_descendants", active_descendants)
 
     reaped_ids = await service.cancel_descendants(SpawnId("p1"))
 
