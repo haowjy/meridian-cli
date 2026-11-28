@@ -807,7 +807,8 @@ The adapter subcommands are `config`, `arm`, `activity`, `return`,
 `needs-permission`, `fire`, and `event`; run `meridian idle --help` for their
 typed contract. `activity turn_active|idle` records the calling primary's turn
 edge for `spawn list`; it runs whatever the idle config says, and `arm`, a turn
-end, records `idle` itself.
+end, records `idle` itself; its reply carries `activity_error` when that record
+failed and the arm did not.
 `fire warn` adds `remind: true` to an `act` answer when the adapter should ask
 the model to record its state in the session's work item (`[idle] state_reminder`
 on and a work item attached).

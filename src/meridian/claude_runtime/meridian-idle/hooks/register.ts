@@ -349,9 +349,10 @@ async function armTask(
   epoch: number,
   assistantText: string | undefined,
   tasks: BackgroundTask[] | undefined,
-): Promise<void> {
-  // The arm records the turn's end itself; without one the end is reported alone.
-  if (!(await gate($, s))) return reportActivity($, s, 'idle')
+): Promise<boolean> {
+  // Returns true once an arm's reply shows it recorded the turn's end; the caller reports it otherwise.
+  if (!(await gate($, s))) return false
+  let ended = false
   try {
     // Work still running does not stop the arm: core reads it and holds or delays the push.
     const session = await $.session.id()
@@ -365,8 +366,9 @@ async function armTask(
     const problem = failure(reply)
     if (problem !== undefined || !isRecord(reply)) {
       note($, s, `arm failed: ${problem ?? 'unexpected reply'}`)
-      return
+      return false
     }
+    ended = reply.activity_error === undefined
     const stretch = asNumber(reply.stretch)
     const anchor = asNumber(reply.anchor)
     if (stretch === undefined || anchor === undefined) {
@@ -374,13 +376,13 @@ async function armTask(
       cancelTimers(s)
       s.armed = undefined
       note($, s, `arm declined${typeof reply.reason === 'string' ? ` (${reply.reason})` : ''}`)
-      return
+      return ended
     }
     s.mayBeOpen = true
-    if (s.epoch !== epoch) return // a return queued behind this arm closes the stretch; arm no timers for it
+    if (s.epoch !== epoch) return ended // a return queued behind this arm closes the stretch; arm no timers for it
     const current = s.armed
     if (current !== undefined && current.session === session && current.stretch === stretch && current.anchor === anchor) {
-      return // same stretch and anchor: core absorbed this arm (a duplicate turn); keep our timers
+      return ended // same stretch and anchor: core absorbed this arm (a duplicate turn); keep our timers
     }
     const warnAt = asNumber(reply.warn_at)
     await trackStretch($, s, session, stretch, warnAt === undefined ? undefined : warnAt - (await $.clock.now()))
@@ -389,7 +391,7 @@ async function armTask(
     if (Object.keys(at).length === 0 && typeof reply.reason === 'string') {
       // An absorbed arm for a stretch we do not know yet carries no deadlines: take them from the store.
       await recover($, s, session, epoch)
-      return
+      return ended
     }
     const armed: Armed = { session, stretch, anchor, at, fired: {} }
     await adopt($, s, armed, epoch)
@@ -397,6 +399,7 @@ async function armTask(
   } catch (err) {
     note($, s, `arm error: ${describeError(err)}`)
   }
+  return ended
 }
 
 // -- keepwarm ---------------------------------------------------------------
@@ -796,10 +799,16 @@ export const register: Register = on => {
       if (prompt !== undefined) s.prompt = undefined
       else s.lastAnswer = e.answer
       void enqueue(s, async () => {
-        const choice = prompt !== undefined ? await finishPrompt($, s, prompt, e.reason, e.answer) : undefined
-        // The prompt's reply must not become the your-turn notice's excerpt.
-        await armTask($, s, epoch, prompt !== undefined ? s.lastAnswer : e.answer, tasks)
-        if (prompt !== undefined && choice === 'compact-now') void compactNow($, s, prompt, epoch, compactions)
+        let ended = false
+        try {
+          const choice = prompt !== undefined ? await finishPrompt($, s, prompt, e.reason, e.answer) : undefined
+          // The prompt's reply must not become the your-turn notice's excerpt.
+          ended = await armTask($, s, epoch, prompt !== undefined ? s.lastAnswer : e.answer, tasks)
+          if (prompt !== undefined && choice === 'compact-now') void compactNow($, s, prompt, epoch, compactions)
+        } finally {
+          // A failed, timed-out or skipped arm must not leave the turn reading as running.
+          if (!ended) await reportActivity($, s, 'idle')
+        }
       })
     }
     return next(e)

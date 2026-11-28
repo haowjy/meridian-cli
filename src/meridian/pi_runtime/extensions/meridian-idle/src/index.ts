@@ -21,6 +21,7 @@ type ArmReply = {
   push_at?: unknown;
   warn_at?: unknown;
   reason?: unknown;
+  activity_error?: unknown;
 };
 type StatusRow = {
   harness?: unknown;
@@ -135,54 +136,65 @@ export class IdleRuntime {
     this.lastMessages = messages;
   }
 
-  /** The run is over: no retry, compaction or queued continuation follows. An arm records
-   * the turn's end itself; with idle off the end is reported alone. */
+  /** The run is over: no retry, compaction or queued continuation follows. An arm that
+   * replies records the turn's end itself; otherwise the end is reported alone. */
   async agentSettled(ctx: ExtensionContext): Promise<void> {
     const messages = this.lastMessages;
     this.lastMessages = undefined;
     const revision = this.revision;
     await this.enqueueTransition(async () => {
-      if (revision !== this.revision || !this.enabled) {
-        await this.reportActivity("idle");
-        return;
+      let ended = false;
+      try {
+        ended = await this.arm(ctx, messages, revision);
+      } finally {
+        if (!ended) await this.reportActivity("idle");
       }
-
-      const previous = this.active;
-      const previousDeadlines = new Map(this.deadlines);
-      this.clearTimers();
-
-      const session = ctx.sessionManager.getSessionId();
-      const args = [
-        "idle", "arm", "--harness", "pi", "--session", session,
-      ];
-      const provider = ctx.model?.provider;
-      if (provider) {
-        args.push("--provider", provider);
-      }
-      const backgroundTasks = await runningBackgroundTasks();
-      if (backgroundTasks.length > 0) {
-        args.push(`--background-tasks=${JSON.stringify(backgroundTasks)}`);
-      }
-      const excerpts = messageExcerpts(messages);
-      if (excerpts.user !== null) this.lastUserText = excerpts.user;
-      if (this.lastUserText !== null) {
-        args.push(`--user-text=${this.lastUserText}`);
-      }
-      if (excerpts.assistant !== null) {
-        args.push(`--assistant-text=${excerpts.assistant}`);
-      }
-
-      const reply = await this.runJson(args);
-      this.reported = "idle";
-      if (revision !== this.revision) {
-        return;
-      }
-      if (!isRecord(reply)) {
-        this.restorePrevious(previous, previousDeadlines);
-        return;
-      }
-      this.applyArmReply(reply, session, previous, previousDeadlines);
     });
+  }
+
+  /** Arms the settled run's stretch; true when its reply shows the turn's end was recorded. */
+  private async arm(ctx: ExtensionContext, messages: unknown, revision: number): Promise<boolean> {
+    if (revision !== this.revision || !this.enabled) {
+      return false;
+    }
+
+    const previous = this.active;
+    const previousDeadlines = new Map(this.deadlines);
+    this.clearTimers();
+
+    const session = ctx.sessionManager.getSessionId();
+    const args = [
+      "idle", "arm", "--harness", "pi", "--session", session,
+    ];
+    const provider = ctx.model?.provider;
+    if (provider) {
+      args.push("--provider", provider);
+    }
+    const backgroundTasks = await runningBackgroundTasks();
+    if (backgroundTasks.length > 0) {
+      args.push(`--background-tasks=${JSON.stringify(backgroundTasks)}`);
+    }
+    const excerpts = messageExcerpts(messages);
+    if (excerpts.user !== null) this.lastUserText = excerpts.user;
+    if (this.lastUserText !== null) {
+      args.push(`--user-text=${this.lastUserText}`);
+    }
+    if (excerpts.assistant !== null) {
+      args.push(`--assistant-text=${excerpts.assistant}`);
+    }
+
+    const reply = await this.runJson(args);
+    const ended = isRecord(reply) && reply.activity_error === undefined;
+    if (ended) this.reported = "idle";
+    if (revision !== this.revision) {
+      return ended;
+    }
+    if (!isRecord(reply)) {
+      this.restorePrevious(previous, previousDeadlines);
+      return false;
+    }
+    this.applyArmReply(reply, session, previous, previousDeadlines);
+    return ended;
   }
 
   input(source: string, ctx: ExtensionContext): void {

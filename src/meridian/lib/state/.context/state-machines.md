@@ -45,6 +45,7 @@ stateDiagram-v2
   starting --> unknown: native TUI started, nothing reported yet
   starting --> idle: harness ready
   unknown --> idle: runtime reports session start or turn end
+  unknown --> turn_active: first report lands mid-turn (agy's first poll, a failed start report)
   idle --> turn_active: a turn starts
   turn_active --> idle: turn ends
   idle --> finalizing: the harness exits

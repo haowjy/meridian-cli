@@ -35,7 +35,8 @@ continuations), with the last `agent_end`'s excerpts. Due push/warn timers call
 It also reports `spawn list`'s `activity`, with idle notifications on or off: `idle` at
 `session_start`, `turn_active` at `agent_start` (once per run: a retry's second start is
 not sent again) and `idle` at `agent_settled`, through the same queue so edges arrive in
-order. With idle on the arm carries the end.
+order. With idle on the arm carries the end; when the arm fails or its reply has
+`activity_error`, the end is reported with `idle activity idle` instead.
 
 ## Build and verify
 

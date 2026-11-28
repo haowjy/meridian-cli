@@ -6,8 +6,10 @@ import json
 import os
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Annotated, Never, Protocol, cast
 
+import structlog
 from cyclopts import Parameter
 
 from meridian.cli.app_tree import idle_app
@@ -17,6 +19,8 @@ from meridian.lib.idle.activity import record_caller_activity
 from meridian.lib.idle.service import IdleService
 from meridian.lib.state.idle_store import Stage
 from meridian.lib.state.primary_meta import TurnActivity
+
+logger = structlog.get_logger(__name__)
 
 
 def _option(name: str, help_text: str) -> Parameter:
@@ -165,11 +169,12 @@ def cmd_idle_arm(
     interactive: InteractiveOption = False,
 ) -> None:
     """Open or re-anchor; same stretch and anchor means keep your timers. An arm is a
-    turn end, so it also records the primary idle, as `idle activity idle` does."""
+    turn end, so it also records the primary idle, as `idle activity idle` does;
+    `activity_error` in the reply means that record failed and the arm did not."""
 
     def arm(service: IdleService, normalized: str) -> _WireResult:
-        try:
-            return service.arm(
+        return _ArmReply(
+            service.arm(
                 harness=normalized,
                 session=session,
                 ttl_seconds=ttl,
@@ -179,11 +184,38 @@ def cmd_idle_arm(
                 last_user_text=user_text,
                 last_assistant_text=assistant_text,
                 background_tasks=_background_tasks(background_tasks),
-            )
-        finally:
-            record_caller_activity(os.environ, harness=normalized, activity="idle")
+            ),
+            _record_idle(normalized),
+        )
 
     _json(harness, interactive, arm)
+
+
+def _record_idle(harness: str) -> str | None:
+    """Records the turn end the arm proves; the failure's text, or None when it was fine.
+
+    Activity is a projection the runtime can still report alone, so its failure must not
+    become the arm's: the stretch is already open and the runtime must time it.
+    """
+
+    try:
+        record_caller_activity(os.environ, harness=harness, activity="idle")
+    except Exception as exc:
+        logger.warning("idle_activity_record_failed", harness=harness, error=str(exc))
+        return str(exc).strip() or exc.__class__.__name__
+    return None
+
+
+@dataclass(frozen=True)
+class _ArmReply:
+    result: _WireResult
+    activity_error: str | None
+
+    def to_wire(self) -> dict[str, object]:
+        payload = self.result.to_wire()
+        if self.activity_error is not None:
+            payload["activity_error"] = self.activity_error
+        return payload
 
 
 @idle_app.command(name="activity")
