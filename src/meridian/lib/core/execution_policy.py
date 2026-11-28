@@ -24,7 +24,7 @@ from meridian.lib.core.overrides import (
     RuntimeOverrides,
     normalize_execution_policy_fields,
 )
-from meridian.lib.safety.policy import (
+from meridian.lib.core.permission_policy import (
     NetworkPolicy,
     network_policy_to_wire,
     parse_network_policy,

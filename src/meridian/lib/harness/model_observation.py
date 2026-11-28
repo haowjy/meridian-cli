@@ -15,9 +15,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.core.types import HarnessSessionId
 from meridian.lib.state.event_store import utc_now_iso
+from meridian.lib.state.native_identity import NativeKey
 from meridian.lib.state.session_store import SessionModelObservationEvent, record_model_observation
 
 _BEST_EFFORT_TAIL_BYTES = 1 << 20

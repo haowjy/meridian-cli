@@ -17,6 +17,12 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import ClassVar
 
+from meridian.lib.core.permission_policy import (
+    EnforcementReport,
+    ReportLine,
+    ReportStatus,
+    complete_report,
+)
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import (
     BootstrapMode,
@@ -48,12 +54,6 @@ from meridian.lib.launch.composition import (
     join_content_blocks,
 )
 from meridian.lib.launch.launch_types import CompositionWarning, ResolvedLaunchSpec
-from meridian.lib.safety.policy import (
-    EnforcementReport,
-    ReportLine,
-    ReportStatus,
-    complete_report,
-)
 
 # A directory with either holds customizations ``agy`` would load: its hooks and MCP servers
 # would run beside the control root's, and a second Meridian plugin runs Meridian's hooks twice.

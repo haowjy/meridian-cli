@@ -63,7 +63,7 @@ from a durable report, cancellation from a cancel intent, or failure otherwise. 
   persists an outcome. Only a `Claimed` result from `claim_dead_launch()` authorizes
   `SpawnApplicationService.finalize_dead_launch()`, the sole writer of a dead lock-backed
   launch's outcome.
-- `reconcile_active_spawn()` (doctor repair, root depth only; see `core/depth.py`) persists
+- `reconcile_active_spawn()` (`lib/spawn/reaper.py`; doctor repair, root depth only; see `core/depth.py`) persists
   the outcome first, then terminates claimed, birth-validated scopes. Unknown identity or
   access errors never authorize primary scope termination. Read-only projected status is
   not authorization to terminate.

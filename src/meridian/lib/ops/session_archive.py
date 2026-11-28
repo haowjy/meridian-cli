@@ -26,9 +26,9 @@ from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.history_codec import last_activity
 from meridian.lib.state.history_index import HistoryIndex, HistoryIndexBusy, HistorySnapshot
 from meridian.lib.state.launch_lock import try_exclusive
+from meridian.lib.state.liveness import scope_liveness
 from meridian.lib.state.paths import LaunchPaths, resolve_spawn_dir
 from meridian.lib.state.process_scope_projection import read_scope_projection
-from meridian.lib.state.reaper import scope_liveness
 from meridian.lib.state.retention_archive import (
     ArchivedRecord,
     SourceWitness,

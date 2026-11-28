@@ -3,10 +3,10 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.core.caller import CallerIdentity
+from meridian.lib.context.resolved import ResolvedContext
 from meridian.lib.core.depth import is_nested_meridian_depth
-from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import SpawnId
+from meridian.lib.state.caller import CallerIdentity
 
 
 class RuntimeContext(BaseModel):

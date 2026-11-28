@@ -6,9 +6,12 @@ vs preserve, delegates to platform-specific backends, logs results.
 
 from __future__ import annotations
 
+import os
+import time
 from collections.abc import Collection
 from pathlib import Path
 
+import psutil
 import structlog
 
 from meridian.lib.platform.process_scope.base import (
@@ -27,16 +30,21 @@ from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.process_scope_projection import (
     is_scope_released,
     mark_scope_released,
+    read_scope_projection,
     read_scopes_from_disk,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn.repository import (
+    SpawnStateQuarantined,
+    iter_spawn_ids,
+    read_state,
+)
+from meridian.lib.state.spawn_store import SpawnScan
 
 logger = structlog.get_logger(__name__)
 
 
 def _wait_for_scope_exit(scope: ProcessScopeSnapshot, *, timeout: float) -> None:
-
-    import time
 
     deadline = time.monotonic() + max(0.0, timeout)
     while True:
@@ -404,13 +412,6 @@ def reclaim_session_owned_scopes_for_chats(
     ``acquire`` in the same process would find it Busy and skip its own scopes.
     """
 
-    from meridian.lib.state.spawn.repository import (
-        SpawnStateQuarantined,
-        iter_spawn_ids,
-        read_state,
-    )
-    from meridian.lib.state.spawn_store import SpawnScan
-
     selected = frozenset(chat_ids)
     if not selected:
         return []
@@ -525,11 +526,61 @@ def _live_root_skip_reason(scope: ProcessScopeSnapshot) -> str | None:
     }[identity]
 
 
+def _unknown_scope_gone(pid: int, pgid: int | None) -> bool:
+    # Signal 0 only. Permission errors and zombies are not proof of absence.
+    if psutil.pid_exists(pid):
+        return False
+    return pgid is None or _group_gone(pgid)
+
+
+def _group_gone(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        return False
+    return False
+
+
+def sweep_unreleased_scopes(launch: LaunchPaths, spawn_id: str) -> None:
+    """Stop every scope the last launch left, or refuse: containment needs proof, not a guess."""
+    projection = read_scope_projection(launch)
+    for scope in projection.scopes:
+        if scope.release_id in projection.released_ids:
+            continue
+        if birth_time_unverified(scope.root_created_at_epoch):
+            if not _unknown_scope_gone(scope.root_pid, scope.pgid):
+                raise ValueError(
+                    f"Cannot safely sweep PID {scope.root_pid} with unknown birth; "
+                    f"use --fork {spawn_id} to branch without touching it"
+                )
+        else:
+            result = terminate_scope_sync(scope, grace_seconds=5.0, reason="continue_sweep")
+            if not result.resolved:
+                raise ValueError(
+                    f"Cannot safely sweep PID {scope.root_pid}: {result.skip_reason}; "
+                    f"use --fork {spawn_id}"
+                )
+            # A PID cannot be reused while it is still a process-group ID.
+            # Other groups need their own absence proof; never signal them.
+            if (
+                result.skip_reason == "pid_reuse_detected"
+                and scope.pgid not in (None, scope.root_pid)
+                and not _group_gone(scope.pgid)
+            ):
+                raise ValueError(
+                    f"Cannot safely sweep live group {scope.pgid}; use --fork {spawn_id}"
+                )
+        mark_scope_released(launch, scope.release_id)
+
+
 __all__ = [
     "cancel_managed_primary",
     "reclaim_session_owned_scopes_for_chat",
     "reclaim_session_owned_scopes_for_chats",
     "should_skip_cleanup",
+    "sweep_unreleased_scopes",
     "terminate_legacy_worker_fallback",
     "terminate_recorded_spawn_scopes",
     "terminate_spawn_scopes",

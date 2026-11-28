@@ -8,20 +8,7 @@ from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Generic, Literal, final
 
-from meridian.lib.core.native_identity import (
-    InvalidNativeSession,
-    LaunchIntent,
-    NativeIdentity,
-    NativeKey,
-    NativeKeyFields,
-    NativeObservationBatch,
-    NativeSessionEvidence,
-    NativeSessionUnavailable,
-    NativeStoreMove,
-    Operation,
-    PostExit,
-    PrecreatedSession,
-)
+from meridian.lib.core.permission_policy import NetworkPolicy
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import (
     HarnessContract,
@@ -45,7 +32,20 @@ from meridian.lib.launch.composition import (
 )
 from meridian.lib.launch.launch_types import CompositionWarning, ResolvedLaunchSpec, SpecT
 from meridian.lib.launch.request import SessionRequest, is_exact_continue_session
-from meridian.lib.safety.policy import NetworkPolicy
+from meridian.lib.state.native_identity import (
+    InvalidNativeSession,
+    LaunchIntent,
+    NativeIdentity,
+    NativeKey,
+    NativeKeyFields,
+    NativeObservationBatch,
+    NativeSessionEvidence,
+    NativeSessionUnavailable,
+    NativeStoreMove,
+    Operation,
+    PostExit,
+    PrecreatedSession,
+)
 from meridian.lib.state.paths import LaunchPaths
 
 if TYPE_CHECKING:

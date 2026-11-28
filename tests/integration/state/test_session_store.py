@@ -17,9 +17,9 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.core.native_identity import NativeKeyFields
 from meridian.lib.state import session_store
 from meridian.lib.state.native_binding import Bound, Conflict, Same
+from meridian.lib.state.native_identity import NativeKeyFields
 from tests.conftest import posix_only
 
 

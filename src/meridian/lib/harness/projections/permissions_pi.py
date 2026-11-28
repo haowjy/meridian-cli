@@ -4,6 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from meridian.lib.core.permission_policy import (
+    EnforcementReport,
+    PermissionPolicy,
+    PlatformCommand,
+    ReportLine,
+    complete_report,
+    platform_element,
+    rule_element,
+)
+from meridian.lib.core.tools import ToolRule, callable_tools, removed_tools, unscoped_action
 from meridian.lib.harness.projections.compaction import compaction_report
 from meridian.lib.harness.projections.native_config import unsupported_native_config_report
 from meridian.lib.harness.projections.tool_extension_policy import (
@@ -16,16 +26,6 @@ from meridian.lib.harness.projections.tool_extension_policy import (
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.text_utils import dedupe_nonempty
-from meridian.lib.safety.policy import (
-    EnforcementReport,
-    PermissionPolicy,
-    PlatformCommand,
-    ReportLine,
-    complete_report,
-    platform_element,
-    rule_element,
-)
-from meridian.lib.tools import ToolRule, callable_tools, removed_tools, unscoped_action
 
 # Pi's tool-selection flags and their short forms; under a bound policy the compile owns them.
 _TOOL_SELECTION_FLAGS: tuple[tuple[str, ...], ...] = (

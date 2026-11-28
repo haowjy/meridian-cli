@@ -10,11 +10,11 @@ import asyncio
 from pathlib import Path
 
 from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
-from meridian.lib.core.native_identity import NativeIdentityError
-from meridian.lib.core.spawn_service import CompleteSpawnOutcome
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
 from meridian.lib.launch.pre_exec_session import LaunchCancelledError
+from meridian.lib.spawn.service import CompleteSpawnOutcome
+from meridian.lib.state.native_identity import NativeIdentityError
 from meridian.lib.state.paths import LaunchPaths
 
 

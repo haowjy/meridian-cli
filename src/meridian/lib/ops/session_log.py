@@ -5,7 +5,7 @@ from typing import Literal, NamedTuple
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.core.context import RuntimeContext
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.transcript import ToolCall
 from meridian.lib.ops.session_log_render import render_session_log

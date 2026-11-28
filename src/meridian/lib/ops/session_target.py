@@ -22,7 +22,6 @@ from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import or_, select
 
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
-from meridian.lib.core.native_identity import NativeKey, NativeSessionUnavailable
 from meridian.lib.core.refs import RefNotFound
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
@@ -34,6 +33,7 @@ from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.ops.spawn.query import read_stored_spawn_row
 from meridian.lib.state import session_identity, session_store, spawn_store
 from meridian.lib.state.history_index import ALIASES, RECORDS, HistoryIndex
+from meridian.lib.state.native_identity import NativeKey, NativeSessionUnavailable
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.retention_archive import (
     archive_locations,

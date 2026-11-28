@@ -7,9 +7,10 @@ from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from meridian.lib.core.process_cleanup import reclaim_session_owned_scopes_for_chat
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.process_scope.base import CleanupResult, ProcessScopeSnapshot
+from meridian.lib.spawn.cleanup import reclaim_session_owned_scopes_for_chat
+from meridian.lib.spawn.reaper import reconcile_active_spawn
 from meridian.lib.state import process_scope_projection, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.process_scope_projection import (
@@ -17,7 +18,6 @@ from meridian.lib.state.process_scope_projection import (
     mark_scope_released,
     record_scope,
 )
-from meridian.lib.state.reaper import reconcile_active_spawn
 from meridian.lib.state.spawn.model import SpawnRecord
 from tests.support.launch_paths import launch_paths
 
@@ -224,7 +224,7 @@ def test_reclaim_session_owned_scopes_for_chat_reclaims_all_matching_spawns(
         )
 
     monkeypatch.setattr(
-        "meridian.lib.core.process_cleanup.terminate_scope_sync",
+        "meridian.lib.spawn.cleanup.terminate_scope_sync",
         _fake_terminate_scope_sync,
     )
 
@@ -317,7 +317,7 @@ def test_reaper_preserve_then_reclaim_reuses_same_scope_records(
         record_scope(launch_paths(runtime_root, SpawnId(spawn_id)), scope)
 
     monkeypatch.setattr(
-        "meridian.lib.state.reaper.is_process_alive",
+        "meridian.lib.state.liveness.is_process_alive",
         lambda *_args, **_kwargs: False,
     )
     alive_proc = type("AliveProc", (), {"create_time": lambda self: 100.0})()
@@ -346,8 +346,13 @@ def test_reaper_preserve_then_reclaim_reuses_same_scope_records(
             skip_reason=None,
         )
 
+    # The reaper terminates the claimed launcher; reclaim terminates the session scopes.
     monkeypatch.setattr(
-        "meridian.lib.core.process_cleanup.terminate_scope_sync",
+        "meridian.lib.spawn.reaper.terminate_scope_sync",
+        _fake_terminate_scope_sync,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.spawn.cleanup.terminate_scope_sync",
         _fake_terminate_scope_sync,
     )
 

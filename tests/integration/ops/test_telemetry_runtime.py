@@ -6,10 +6,9 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-from meridian.lib.core.lifecycle import SpawnLifecycleService
-from meridian.lib.core.spawn_lifecycle import SpawnReservation
-from meridian.lib.launch.types import PrimarySessionMetadata
+from meridian.lib.core.domain import PrimarySessionMetadata
 from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
+from meridian.lib.spawn.lifecycle import SpawnLifecycleService, SpawnReservation
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.telemetry.retention import run_retention_cleanup
 

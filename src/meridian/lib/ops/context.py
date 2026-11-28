@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from meridian.lib.autosync.clones import require_outside_clone
 from meridian.lib.catalog.mars_roots import mars_fallback_label
 from meridian.lib.config.context_config import ContextConfig
+from meridian.lib.context.resolved import ResolvedContext
 from meridian.lib.context.resolver import (
     ResolvedContext as ResolvedContextEntry,
 )
@@ -17,9 +18,8 @@ from meridian.lib.context.resolver import (
     context_env_key,
     resolve_context_paths,
 )
-from meridian.lib.core.context import RuntimeContext
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.refs import RefNotFound
-from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.util import FormatContext
 from meridian.lib.launch.cwd import inheritable_task_dir, resolve_effective_task_dir
 from meridian.lib.launch.session_links import execution_link_chat, republish_chat_links

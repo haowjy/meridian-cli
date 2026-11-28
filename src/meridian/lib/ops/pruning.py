@@ -13,8 +13,8 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.config.models import ADHOC_STALE_RETENTION_DAYS
 from meridian.lib.config.project_root import has_project_marker
+from meridian.lib.core.domain import is_active_spawn_status
 from meridian.lib.core.refs import is_spawn_id
-from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.platform.locking import lock_file, try_lock_file
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.history_changes import HistoryChanges

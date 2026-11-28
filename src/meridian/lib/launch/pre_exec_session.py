@@ -5,13 +5,13 @@ import signal
 from pathlib import Path
 from typing import Literal
 
-from meridian.lib.core.native_identity import PrecreatedSession
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import PreExecSessionRequest, SubprocessHarness
 from meridian.lib.launch.context import PreparedLaunchSurface
 from meridian.lib.launch.env import inherit_child_env
-from meridian.lib.launch.signals import signal_to_exit_code
+from meridian.lib.platform.signals import signal_to_exit_code
 from meridian.lib.state import spawn_store
+from meridian.lib.state.native_identity import PrecreatedSession
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_status import read_cancel_intent
 

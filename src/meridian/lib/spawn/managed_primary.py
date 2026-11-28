@@ -7,12 +7,19 @@ from pathlib import Path
 import psutil
 
 from meridian.lib.core.types import SpawnId
-from meridian.lib.state.liveness import is_process_alive_with_birth
+from meridian.lib.spawn.cleanup import (
+    cancel_managed_primary,
+    terminate_recorded_spawn_scopes,
+)
+from meridian.lib.state.liveness import is_process_alive_with_birth, is_process_dead_with_birth
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.primary_meta import PrimaryMetadata, read_primary_metadata
 from meridian.lib.state.spawn.model import SpawnRecord
 
 _RELEASE_GRACE_SECS = 5.0
+
+
+TEARDOWN_GRACE_SECS = 5.0
 
 
 def _terminate_pid(pid: int) -> bool:
@@ -79,12 +86,6 @@ def tear_down_dead_launch(
     unknown. Each step's grace is the time left before ``until`` (monotonic).
     """
 
-    # Lazy to avoid a state -> core import cycle: core.process_cleanup imports state.
-    from meridian.lib.core.process_cleanup import (
-        cancel_managed_primary,
-        terminate_recorded_spawn_scopes,
-    )
-
     managed = metadata.managed_backend if metadata is not None else managed_if_unrecorded
     if managed:
         terminate_managed_primary_processes(metadata, include_launcher=False)
@@ -105,8 +106,6 @@ def release_managed_primary_scopes(
 ) -> None:
     """Tear down a terminal managed-primary orphan once its runner is gone."""
 
-    from meridian.lib.state.liveness import is_process_dead_with_birth
-
     if not is_process_dead_with_birth(record.runner_pid, record.runner_created_at_epoch):
         return
     metadata = read_primary_metadata(LaunchPaths.for_row(runtime_root, record))
@@ -123,8 +122,30 @@ def release_managed_primary_scopes(
     )
 
 
+def require_managed_processes_gone(metadata: PrimaryMetadata | None, spawn_id: str) -> None:
+    """The backend and TUI were signalled by exact birth; the next launch needs them gone."""
+    if metadata is None or not metadata.managed_backend:
+        return
+    survivors = (
+        (metadata.backend_pid, metadata.backend_birth_epoch),
+        (metadata.tui_pid, metadata.tui_birth_epoch),
+    )
+    deadline = time.monotonic() + TEARDOWN_GRACE_SECS
+    while time.monotonic() < deadline:
+        if not any(
+            pid is not None and is_process_alive_with_birth(pid, birth) for pid, birth in survivors
+        ):
+            return
+        time.sleep(0.05)
+    raise ValueError(
+        f"{spawn_id} has processes from its last run that could not be stopped; "
+        "run `meridian doctor`"
+    )
+
+
 __all__ = [
     "release_managed_primary_scopes",
+    "require_managed_processes_gone",
     "tear_down_dead_launch",
     "terminate_managed_primary_processes",
 ]

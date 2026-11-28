@@ -6,11 +6,11 @@ from uuid import uuid4
 
 import pytest
 
-from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.harness.claude import ClaudeAdapter
 from meridian.lib.harness.claude_sessions import project_slug
 from meridian.lib.harness.codex import CodexAdapter
 from meridian.lib.harness.opencode import OpenCodeAdapter
+from meridian.lib.state.native_identity import NativeSessionUnavailable
 
 
 @pytest.fixture(autouse=True)

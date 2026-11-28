@@ -25,19 +25,8 @@ from typing import (
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from meridian.lib.config.harness_models import PiHarnessProfileConfig
-from meridian.lib.core.native_identity import (
-    LaunchIntent,
-    NativeIdentity,
-    NativeKey,
-    NativeKeyFields,
-    NativeObservationBatch,
-    NativeSessionEvidence,
-    NativeStoreMove,
-    Operation,
-    PostExit,
-    PrecreatedSession,
-)
 from meridian.lib.core.overrides import AutocompactPctValue, AutocompactValue
+from meridian.lib.core.permission_policy import NetworkPolicy
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
@@ -57,7 +46,18 @@ from meridian.lib.launch.launch_types import (
     TerminalSurfaceMode,
 )
 from meridian.lib.launch.request import SessionRequest
-from meridian.lib.safety.policy import NetworkPolicy
+from meridian.lib.state.native_identity import (
+    LaunchIntent,
+    NativeIdentity,
+    NativeKey,
+    NativeKeyFields,
+    NativeObservationBatch,
+    NativeSessionEvidence,
+    NativeStoreMove,
+    Operation,
+    PostExit,
+    PrecreatedSession,
+)
 from meridian.lib.state.paths import LaunchPaths
 
 if TYPE_CHECKING:

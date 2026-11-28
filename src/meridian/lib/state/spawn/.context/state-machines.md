@@ -30,14 +30,17 @@ stateDiagram-v2
   exits. `queued` and `finalizing` are in
   `SpawnStatus`, and no code here writes either one. `finalizing` reaches a caller only as the
   answer to a `cancel` whose runner still holds the lock at the deadline
-  (`core/spawn_service.py`, `cancel`). A row that says `unknown` is read for compatibility.
-- **Who writes the end.** The process holding the launch lock writes the terminal status
-  through `SpawnApplicationService.complete_spawn`, under the per-spawn mutation lock. When
+  (`spawn/service.py`, `cancel`). A row that says `unknown` is read for compatibility.
+- **Who writes the end.** Every terminal write goes through `SpawnApplicationService`
+  (`lib/spawn/service.py`). The process holding the launch lock writes it through
+  `complete_spawn` (a runner through `complete_execution`), under the per-spawn mutation lock. When
   the runner died, the launch lock is free. Readers then *derive* a terminal status without
   storing it (`state/spawn_status.py:derive`): `succeeded` if the report shows a durable
   completion, `cancelled` if a cancel intent exists, otherwise `failed` with error `crashed`.
-  Only `finalize_dead_launch`, after `claim_dead_launch` takes the lock, writes that derived
-  status. A wrong edit that lets a reader persist it would race a live runner.
+  Two service methods write that derived status, each holding the lock:
+  `finalize_dead_launch`, after `claim_dead_launch` takes it (reaper, cancel, doctor), and
+  `finish_last_launch`, for a continue that took it to start the next launch. A wrong edit
+  that lets a reader persist it would race a live runner.
 - **Cancel** writes `cancel.json` first (the first request wins), then sends SIGTERM, waits,
   and sends SIGKILL to the verified process tree. The intent outlives every process, so a
   crash mid-cancel still ends as `cancelled`.

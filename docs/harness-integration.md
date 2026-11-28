@@ -59,8 +59,8 @@ older builds wrote chats for; a new harness never joins it. Do not add another h
 
 A harness the person starts themselves, like Antigravity, is the exception: Meridian never
 runs it, so it gets a `HarnessId` member with `launched_by_meridian` false, an adapter with
-launch ports only (including registered `PrintedLaunchPorts`), no process ports, and a line in
-`_PACKAGES` (`lib/harness/plugin_hosted.py`). Its plugin calls `meridian` commands, and rows it
+launch ports only (including registered `PrintedLaunchPorts`), no process ports, and its name in
+`PLUGIN_HOSTED` (`lib/core/types.py`), which `lib/harness/plugin_hosted.py` dispatches on. Its plugin calls `meridian` commands, and rows it
 holds are told apart by `is_plugin_hosted`; see [`lib/harness/AGENTS.md`](../src/meridian/lib/harness/AGENTS.md)
 and [Using Meridian from Antigravity](antigravity.md).
 

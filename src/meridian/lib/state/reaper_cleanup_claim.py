@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
+from meridian.lib.core.domain import is_active_spawn_status
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.atomic import fsync_directory
 from meridian.lib.platform.locking import lock_file

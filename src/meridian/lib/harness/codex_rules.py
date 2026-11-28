@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from meridian.lib.core.permission_policy import CONSTRAINED_SANDBOX_MODES, PermissionPolicy
 from meridian.lib.harness.codex_rollout import resolve_codex_home
 from meridian.lib.launch.launch_types import CodexRuntimeResolution
 from meridian.lib.launch.permissions import (
@@ -14,7 +15,6 @@ from meridian.lib.launch.permissions import (
     SPAWN_PLATFORM_COMMAND,
 )
 from meridian.lib.platform.atomic import AtomicReplaceDurabilityError, atomic_write_text
-from meridian.lib.safety.policy import CONSTRAINED_SANDBOX_MODES, PermissionPolicy
 
 
 def _rules_content(command: str) -> str:

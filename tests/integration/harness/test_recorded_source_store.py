@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.core.native_identity import LaunchIntent
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.request import SessionRequest
+from meridian.lib.state.native_identity import LaunchIntent
 from tests.support.opencode_db import write_opencode_db_session
 
 SID = "12345678-1234-4234-8234-123456789abc"
@@ -171,8 +171,8 @@ def test_exact_sources_refuse_invalid_headers(
 ) -> None:
     import json
 
-    from meridian.lib.core.native_identity import NativeEntryMismatch, NativeSessionUnavailable
     from meridian.lib.harness.claude_sessions import ensure_claude_session_accessible
+    from meridian.lib.state.native_identity import NativeEntryMismatch, NativeSessionUnavailable
 
     store = tmp_path / "sessions"
     store.mkdir()

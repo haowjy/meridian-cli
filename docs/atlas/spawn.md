@@ -70,7 +70,7 @@ directory. The depth guard runs first and stops a spawn that would go too deep, 
 The resolved sandbox must pass the caller's guardrail before any runtime file is written.
 
 - Kind: module
-- Paths: `src/meridian/lib/ops/spawn/prepare.py`, `src/meridian/lib/launch/composition_spawn.py`, `src/meridian/lib/launch/plan.py`, `src/meridian/lib/safety`
+- Paths: `src/meridian/lib/ops/spawn/prepare.py`, `src/meridian/lib/launch/composition_spawn.py`, `src/meridian/lib/launch/plan.py`, `src/meridian/lib/core/permission_policy.py`
 
 Meridian ignores Mars's precomposed prompt surfaces and composes its own prompt. It treats
 the bundle's `tools.rules` as the permission contract.
@@ -140,13 +140,16 @@ harness's own store and can be resumed without Meridian.
 
 ## finish
 
-`SpawnApplicationService.complete_spawn` in `lib/core/spawn_service.py`: under the spawn's
-mutation lock it writes `report.md` and the terminal status, then dispatches the
-`spawn.finished` lifecycle event to hooks (`lib/core/lifecycle.py`). If the runner died, the next reader sees the lock free and `finalize_dead_launch`
-writes `failed` (`crashed`) or `cancelled` instead.
+The runner finishes its own launch. `report.md` is the harness's own, or the runner writes it
+from the last assistant message or the failure (`enrich_finalize` in `lib/launch/extract.py`).
+Then `SpawnApplicationService.complete_execution` in `lib/spawn/service.py` writes the terminal
+status under the spawn's row lock and dispatches the `spawn.finished` lifecycle event to hooks
+(`lib/spawn/lifecycle.py`). If the runner died, readers see the launch lock free; the reaper or a
+cancel claims it and `finalize_dead_launch` writes `failed` (`crashed`) or `cancelled` instead,
+and a continue ends the dead launch with `finish_last_launch`.
 
 - Kind: module
-- Paths: `src/meridian/lib/core/spawn_service.py`, `src/meridian/lib/core/lifecycle.py`, `src/meridian/lib/state/spawn_status.py`
+- Paths: `src/meridian/lib/spawn/service.py`, `src/meridian/lib/spawn/lifecycle.py`, `src/meridian/lib/launch/extract.py`, `src/meridian/lib/state/spawn_status.py`
 
 ## wait
 

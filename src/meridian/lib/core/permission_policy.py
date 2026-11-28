@@ -22,7 +22,7 @@ from pydantic import (
     model_validator,
 )
 
-from meridian.lib.tools import (
+from meridian.lib.core.tools import (
     LEGACY_SNAPSHOT_ORIGIN,
     PLATFORM_ORIGIN,
     PROJECT_ORIGIN,

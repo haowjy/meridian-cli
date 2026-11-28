@@ -3,8 +3,7 @@
 from contextlib import nullcontext
 from pathlib import Path
 
-from meridian.lib.core.context import RuntimeContext
-from meridian.lib.core.native_identity import NativeSessionUnavailable
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.refs import RefNotFound, parse_ref
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.launch.continue_launch import (
@@ -23,6 +22,7 @@ from meridian.lib.ops.relocate_gate import copy_checkout_note, relocate_hint
 from meridian.lib.ops.runtime import (
     runtime_context,
 )
+from meridian.lib.state.native_identity import NativeSessionUnavailable
 from meridian.lib.state.spawn.model import SpawnRecord
 
 from .create import (

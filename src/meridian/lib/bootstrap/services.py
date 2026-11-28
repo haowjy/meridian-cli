@@ -22,8 +22,8 @@ from meridian.lib.state.project_identity import (
 )
 
 if TYPE_CHECKING:
-    from meridian.lib.core.lifecycle import SpawnLifecycleService
-    from meridian.lib.core.spawn_service import SpawnApplicationService
+    from meridian.lib.spawn.lifecycle import SpawnLifecycleService
+    from meridian.lib.spawn.service import SpawnApplicationService
 
 
 @dataclass(frozen=True)
@@ -163,9 +163,15 @@ def build_spawn_lifecycle_service_from_roots(
     lifecycle: SpawnLifecycleService | None = None,
 ) -> SpawnLifecycleService:
 
-    from meridian.lib.core.lifecycle import create_lifecycle_service
+    if lifecycle is not None:
+        return lifecycle
+    from meridian.lib.hooks.dispatch import get_hook_dispatcher
+    from meridian.lib.spawn.lifecycle import SpawnLifecycleService
 
-    return lifecycle or create_lifecycle_service(project_root, runtime_root)
+    dispatcher = get_hook_dispatcher(project_root, runtime_root)
+    return SpawnLifecycleService(
+        runtime_root, hooks=[dispatcher] if dispatcher is not None else None
+    )
 
 
 def build_spawn_application_service_from_roots(
@@ -175,7 +181,7 @@ def build_spawn_application_service_from_roots(
     lifecycle: SpawnLifecycleService | None = None,
 ) -> SpawnApplicationService:
 
-    from meridian.lib.core.spawn_service import SpawnApplicationService
+    from meridian.lib.spawn.service import SpawnApplicationService
 
     lifecycle_service = build_spawn_lifecycle_service_from_roots(
         project_root,

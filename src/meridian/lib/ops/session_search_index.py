@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TypedDict
 
-from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import NativeStoreReader
 from meridian.lib.harness.native_witness import FileWitness, Witness, file_witness
@@ -22,6 +21,7 @@ from meridian.lib.ops.session_transcript import (
     parse_session_target,
     read_native_source,
 )
+from meridian.lib.state.native_identity import NativeKey
 from meridian.lib.state.native_search_index import (
     PARSER_VERSION,
     NativeSearchIndex,

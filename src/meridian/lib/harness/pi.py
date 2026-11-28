@@ -10,15 +10,6 @@ import structlog
 
 from meridian.lib.config.loader import resolve_pi_harness_profile
 from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.core.native_identity import (
-    LaunchIntent,
-    NativeIdentity,
-    NativeIdentityError,
-    NativeKeyFields,
-    NativeSessionEvidence,
-    Operation,
-    PostExit,
-)
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     BootstrapMode,
@@ -109,6 +100,15 @@ from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text
 from meridian.lib.state import pi_lifecycle
 from meridian.lib.state.history_changes import HistoryCoordinationError
 from meridian.lib.state.history_index import HistoryIndexIncomplete
+from meridian.lib.state.native_identity import (
+    LaunchIntent,
+    NativeIdentity,
+    NativeIdentityError,
+    NativeKeyFields,
+    NativeSessionEvidence,
+    Operation,
+    PostExit,
+)
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn.repository import SpawnStateQuarantined
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact

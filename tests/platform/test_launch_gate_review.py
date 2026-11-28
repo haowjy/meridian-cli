@@ -86,8 +86,8 @@ def test_guardian_grace_ignores_hostile_path(tmp_path: Path) -> None:
 
 
 def test_live_runner_with_only_stale_files_survives_reconciliation(tmp_path: Path) -> None:
+    from meridian.lib.spawn.reaper import reconcile_active_spawn
     from meridian.lib.state import spawn_store
-    from meridian.lib.state.reaper import reconcile_active_spawn
     from meridian.lib.state.spawn_status import read_derived
 
     runtime = tmp_path / "runtime"

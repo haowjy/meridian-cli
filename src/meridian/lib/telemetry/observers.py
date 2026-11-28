@@ -10,7 +10,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from meridian.lib.core.telemetry import LifecycleEvent
+    from meridian.lib.telemetry.lifecycle import LifecycleEvent
 
 
 logger = logging.getLogger(__name__)

@@ -9,10 +9,10 @@ from uuid import UUID
 
 from meridian.lib.catalog.model_aliases import run_mars_models_for_harness
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
-from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.harness.model_observation import observe_session_model
 from meridian.lib.launch.policy_snapshot import managed_model_override_from_persisted_model
 from meridian.lib.launch.request import SessionRequest
+from meridian.lib.state.native_identity import NativeKey
 from meridian.lib.state.session_store import (
     ConversationModelSelection,
     SessionModelSelectionEvent,

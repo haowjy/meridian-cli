@@ -9,7 +9,6 @@ from contextlib import closing, contextmanager
 from dataclasses import astuple, dataclass
 from pathlib import Path
 
-from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.harness.opencode_transcript import (
     connect_readonly,
     db_schema,
@@ -18,6 +17,7 @@ from meridian.lib.harness.opencode_transcript import (
     iter_v2_session_events,
     v2_message_event,
 )
+from meridian.lib.state.native_identity import NativeKey
 
 
 @dataclass(frozen=True)

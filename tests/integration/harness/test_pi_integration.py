@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.core.native_identity import NativeIdentity
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections import pi_rpc as pi_rpc_module
 from meridian.lib.harness.connections.base import (
@@ -19,6 +18,7 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection, PiRpcTimingPolicy
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
+from meridian.lib.state.native_identity import NativeIdentity
 from meridian.lib.state.paths import (
     LaunchPaths,
     resolve_project_runtime_root_for_write,

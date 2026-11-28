@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from meridian.lib.safety.policy import (
+from meridian.lib.core.permission_policy import (
     CONSTRAINED_SANDBOX_MODES,
     SANDBOX_MODE_WEAKNESS,
     EffectivePolicy,
@@ -21,7 +21,7 @@ from meridian.lib.safety.policy import (
 from meridian.lib.utils.json_shapes import loads_json_object
 
 if TYPE_CHECKING:
-    from meridian.lib.safety.policy import PermissionPolicy
+    from meridian.lib.core.permission_policy import PermissionPolicy
 
 CALLER_BOUNDARY_ENV = "_MERIDIAN_CALLER_BOUNDARY"
 SANDBOXED_SPAWN_LAUNCH_ERROR = (

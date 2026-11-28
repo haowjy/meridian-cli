@@ -20,9 +20,8 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.config.project_root import resolve_project_root_resolution
-from meridian.lib.core.native_identity import NativeKeyFields
+from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.refs import is_chat_id
-from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import ChatId
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.adapter import NativeRelocation
@@ -38,6 +37,7 @@ from meridian.lib.platform.atomic import atomic_symlink
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_store, spawn_store, work_repository
 from meridian.lib.state.event_store import utc_now_iso
+from meridian.lib.state.native_identity import NativeKeyFields
 from meridian.lib.state.paths import RuntimePaths, rebase_path
 from meridian.lib.state.project_identity import is_same_project
 from meridian.lib.state.session_fold import (

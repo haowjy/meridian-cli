@@ -3,11 +3,11 @@ from __future__ import annotations
 import threading
 from typing import TYPE_CHECKING
 
-from meridian.lib.core.spawn_lifecycle import FAILURE_SPAWN_STATUSES
+from meridian.lib.core.domain import FAILURE_SPAWN_STATUSES
 from meridian.lib.telemetry.observers import LifecycleObserverTier, register_observer
 
 if TYPE_CHECKING:
-    from meridian.lib.core.telemetry import LifecycleEvent
+    from meridian.lib.telemetry.lifecycle import LifecycleEvent
 
 
 # Only these sparse lifecycle events get projected into telemetry. The full

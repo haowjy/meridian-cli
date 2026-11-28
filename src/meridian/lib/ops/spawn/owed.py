@@ -12,9 +12,9 @@ import structlog
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.bootstrap.services import RuntimeReadContext
-from meridian.lib.core.context import RuntimeContext
+from meridian.lib.context.runtime import RuntimeContext
+from meridian.lib.core.domain import is_terminal_spawn_status
 from meridian.lib.core.logging import warn_once
-from meridian.lib.core.spawn_lifecycle import is_terminal_spawn_status
 from meridian.lib.harness.command_ports import consumed_launches
 from meridian.lib.ops.runtime import resolve_runtime_authority_for_read, runtime_context
 from meridian.lib.state import history_index

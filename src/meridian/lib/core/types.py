@@ -5,7 +5,9 @@ from typing import Annotated, NewType
 
 from pydantic import BeforeValidator, StringConstraints
 
-from meridian.lib.harness.plugin_hosted import PLUGIN_HOSTED
+# Harnesses whose plugin hosts their sessions; ``lib/harness/plugin_hosted.py`` dispatches to
+# each one's package, ``meridian.lib.harness.<name>``.
+PLUGIN_HOSTED = frozenset({"agy"})
 
 
 class HarnessId(StrEnum):

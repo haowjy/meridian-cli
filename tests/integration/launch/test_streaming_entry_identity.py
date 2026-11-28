@@ -8,14 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.core.domain import Spawn, SpawnStatus
+from meridian.lib.core.domain import PrimarySessionMetadata, Spawn, SpawnStatus
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEvent
 from meridian.lib.harness.launch_spec import ResolvedLaunchSpec
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.request import SessionRequest, SpawnRequest
 from meridian.lib.launch.session_scope import session_scope
-from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
