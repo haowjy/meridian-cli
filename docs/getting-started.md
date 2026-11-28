@@ -81,7 +81,7 @@ mkdir scratch && cd scratch
 meridian opencode -a reviewer
 ```
 
-User packages live at the Mars user level (`~/.config/mars/`); each project's
+User packages live at the Mars user level (`~/.mars/`); each project's
 `meridian mars sync` installs them there too. A bare directory stays untouched;
 its runtime and context state use a path-derived `adhoc.*` name under
 `~/.meridian/`.

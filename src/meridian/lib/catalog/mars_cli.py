@@ -96,13 +96,11 @@ class MarsRoot(BaseModel):
 
     kind: Literal["project", "user"]
     path: Path
-    # Only the user level reports these; a project keeps its store in ``<path>/.mars``.
-    config_dir: Path | None = None
-    store_dir: Path | None = None
 
     @property
     def store(self) -> Path:
-        return self.store_dir or self.path / ".mars"
+        # The user level is its own store; a project keeps its store in ``<path>/.mars``.
+        return self.path if self.kind == "user" else self.path / ".mars"
 
 
 def parse_mars_root(payload: object) -> MarsRoot | None:
@@ -208,7 +206,7 @@ def legacy_user_root(user_level: MarsRoot | None = None) -> LegacyUserRoot | Non
     if user_level is not None:
         user_items = f"{(user_level.path / '.mars-src').as_posix()}/"
         user_manifest = (user_level.path / "mars.toml").as_posix()
-        user_config = ((user_level.config_dir or user_level.path) / "config.toml").as_posix()
+        user_config = (user_level.path / "config.toml").as_posix()
     else:
         user_items = (
             "your Mars user level's .mars-src/ (root.path of meridian mars --user list --json)"
@@ -217,7 +215,7 @@ def legacy_user_root(user_level: MarsRoot | None = None) -> LegacyUserRoot | Non
             "your Mars user level's mars.toml (in root.path of meridian mars --user list --json)"
         )
         user_config = (
-            "your Mars user config.toml (in root.config_dir of meridian mars --user list --json)"
+            "your Mars user config.toml (in root.path of meridian mars --user list --json)"
         )
     own_items_step = f"move {own_items.as_posix()} into {user_items}"
     try:

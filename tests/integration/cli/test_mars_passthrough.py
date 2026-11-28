@@ -141,13 +141,12 @@ def test_writes_outside_a_project_need_user_and_reach_the_user_level(tmp_path: P
     (package / "SKILL.md").write_text(
         "---\nname: hello\ndescription: Hello.\n---\nHello.\n", encoding="utf-8"
     )
-    config_dir = tmp_path / "mars-config"
+    mars_home = tmp_path / "mars-home"
     env = {
         **os.environ,
         "HOME": (tmp_path / "home").as_posix(),
         "MERIDIAN_HOME": (tmp_path / "meridian-home").as_posix(),
-        "MARS_CONFIG_DIR": config_dir.as_posix(),
-        "MARS_DATA_DIR": (tmp_path / "mars-data").as_posix(),
+        "MARS_HOME": mars_home.as_posix(),
         # Meridian's directory, not the shell's, decides where Mars looks for a project.
         "MERIDIAN_PROJECT_DIR": bare.as_posix(),
     }
@@ -175,5 +174,5 @@ def test_writes_outside_a_project_need_user_and_reach_the_user_level(tmp_path: P
 
     added = meridian_mars("--user", "add", (tmp_path / "package").as_posix())
     assert added.returncode == 0, added.stderr
-    assert (config_dir / "mars.toml").is_file()
+    assert (mars_home / "mars.toml").is_file()
     assert not any(bare.iterdir())

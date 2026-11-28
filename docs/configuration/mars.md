@@ -6,10 +6,10 @@ are build output; do not edit them directly.
 
 ## User packages and bare directories
 
-Packages you install for yourself live at the Mars user level (`~/.config/mars/mars.toml`,
-its store in `~/.local/share/mars/`; see the
-[Mars user-level guide](https://github.com/haowjy/mars-agents/blob/main/docs/cli/user-level.md)
-for `MARS_CONFIG_DIR` and the XDG variables). Add them with `--user`:
+Packages you install for yourself live at the Mars user level, `~/.mars/`: its `mars.toml`,
+`config.toml` and store are all in that one folder (`MARS_HOME` moves it; see the
+[Mars user-level guide](https://github.com/haowjy/mars-agents/blob/main/docs/cli/user-level.md)).
+Add them with `--user`:
 
 ```bash
 meridian mars --user add haowjy/meridian-base
@@ -32,7 +32,7 @@ Inside a project, user-level items are installed by the project's own `meridian 
 beside its packages and kept out of its commits; an item of the same name from the project's
 packages wins. Model aliases and routing config come from the project's Mars config.
 `meridian config show`, `meridian context` and `meridian doctor` report the root Mars chose as
-`mars` (`kind`, `path`, and for the user level `config_dir` and `store_dir`).
+`mars` (`kind` and `path`; the user level's store and `config.toml` are in its `path`).
 
 Writes without `--user` need a project. `meridian mars add` and `link` would create one where
 there is none, so Meridian refuses them when Mars reports `project_not_found` there; every

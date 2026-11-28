@@ -20,9 +20,10 @@ copies, and for the store a replayed relative profile path resolves in. When Mar
 `MarsRootReport.error` carries why (no binary, or Mars's own message) and `doctor` and
 `config show` warn with it.
 Meridian reads installed files only where Mars points (an agent's `source_path`, the store
-`root` names; a project's store is its documented `.mars/`), and never Mars's state files
-(`native-agents.json`, `models-merged.json`, locks): ask Mars instead. The user level's location
-follows XDG and `MARS_*_DIR` rules that belong to Mars. Launch bootstrap docs are read from
+`root` names: a project's store is its documented `.mars/`, the user level is its own store at
+`root.path`), and never Mars's state files (`native-agents.json`, `models-merged.json`, locks):
+ask Mars instead. Where the user level lives (`MARS_HOME`, else `~/.mars`) is Mars's rule;
+Meridian never computes it. Launch bootstrap docs are read from
 the store `root` names (`BootstrapRegistry`), since Mars reports no path for them; `meridian
 init` reports content from `mars list --json` and runs `mars init`, a no-op on an existing
 project, instead of checking for `mars.toml` itself.
