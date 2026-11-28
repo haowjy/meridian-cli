@@ -103,8 +103,9 @@ def parse_mars_passthrough(
     wants_json = mars_requested_json(mars_args) or output_format == "json"
     if wants_json and not mars_requested_json(mars_args):
         mars_args = ["--json", *mars_args]
-    if not user_scope and not wants_help:
-        if subcommand in {"agents", "skills"}:
+    if not wants_help:
+        # A --user listing shows only the user level: no old user root, no host bundle.
+        if not user_scope and subcommand in {"agents", "skills"}:
             mars_args.extend(mars_content_args())
         if subcommand in MARS_SYNCING_COMMANDS and not any(
             token == "--provided-root" or token.startswith("--provided-root=")
