@@ -1,5 +1,5 @@
 - Untangle in the rewrite: `context.py` builds the final launch environment
-  before `core/spawn_service.py` and `streaming_runner.py` apply Pi timeout and
+  before `spawn_prepare.py` and `streaming_runner.py` apply Pi timeout and
   ping settings, while the primary path omits that projection. Build one final
   environment at the adapter bind seam so every launch surface uses the same
   projection.

@@ -70,7 +70,7 @@ directory. The depth guard runs first and stops a spawn that would go too deep, 
 The resolved sandbox must pass the caller's guardrail before any runtime file is written.
 
 - Kind: module
-- Paths: `src/meridian/lib/ops/spawn/prepare.py`, `src/meridian/lib/launch/composition_spawn.py`, `src/meridian/lib/launch/plan.py`, `src/meridian/lib/safety`
+- Paths: `src/meridian/lib/ops/spawn/prepare.py`, `src/meridian/lib/launch/composition_spawn.py`, `src/meridian/lib/launch/plan.py`, `src/meridian/lib/core/permission_policy.py`
 
 Meridian ignores Mars's precomposed prompt surfaces and composes its own prompt. It treats
 the bundle's `tools.rules` as the permission contract.
@@ -140,13 +140,13 @@ harness's own store and can be resumed without Meridian.
 
 ## finish
 
-`SpawnApplicationService.complete_spawn` in `lib/core/spawn_service.py`: under the spawn's
+`SpawnApplicationService.complete_spawn` in `lib/spawn/service.py`: under the spawn's
 mutation lock it writes `report.md` and the terminal status, then dispatches the
-`spawn.finished` lifecycle event to hooks (`lib/core/lifecycle.py`). If the runner died, the next reader sees the lock free and `finalize_dead_launch`
+`spawn.finished` lifecycle event to hooks (`lib/spawn/lifecycle.py`). If the runner died, the next reader sees the lock free and `finalize_dead_launch`
 writes `failed` (`crashed`) or `cancelled` instead.
 
 - Kind: module
-- Paths: `src/meridian/lib/core/spawn_service.py`, `src/meridian/lib/core/lifecycle.py`, `src/meridian/lib/state/spawn_status.py`
+- Paths: `src/meridian/lib/spawn/service.py`, `src/meridian/lib/spawn/lifecycle.py`, `src/meridian/lib/state/spawn_status.py`
 
 ## wait
 

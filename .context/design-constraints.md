@@ -65,8 +65,8 @@ deprecation warning, and no test reads state written by a real older build.
 launch (`lib/state/liveness.py`, `signal_with_birth`). The launch gate holds a child
 until its scope is recorded (`lib/platform/launch_gate.py`). A held launch lock can't
 be claimed, so cancel signals the runner instead of starting or claiming the work
-(`lib/core/spawn_service.py`). A sandboxed caller can't launch a less-confined child
-(`lib/core/caller_boundary.py`). Details: `lib/core/.context/cancel.md`, the KB's
+(`lib/spawn/service.py`). A sandboxed caller can't launch a less-confined child
+(`lib/core/caller_boundary.py`). Details: `lib/spawn/.context/cancel.md`, the KB's
 `launch/process-scope.md` and `permissions/sandbox-projection.md`.
 
 **Checked by** `tests/platform/test_launch_gate.py`, `test_launch_gate_review.py` and

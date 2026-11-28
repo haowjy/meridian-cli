@@ -12,7 +12,7 @@ profile writes `'*': deny` with the allows (a whole-policy allowlist); `bash: de
 on Pi, Codex and OpenCode; Claude checks its denies and asks first, so there a matching
 deny or ask still restricts a grant.
 
-Questions about a policy's rules are answered in one place, `lib/tools.py`, on the one
+Questions about a policy's rules are answered in one place, `lib/core/tools.py`, on the one
 `STRICTNESS` order: `unscoped_action(rules, *capabilities)` (the strictest unscoped action,
 for `*` or a feature's spellings), `could_refuse(rules, capability)` (whether any deny, ask or
 `*` rule could stop a call), `removed_tools` and `callable_tools` (what a tool list drops and

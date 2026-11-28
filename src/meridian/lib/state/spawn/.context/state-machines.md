@@ -30,7 +30,7 @@ stateDiagram-v2
   exits. `queued` and `finalizing` are in
   `SpawnStatus`, and no code here writes either one. `finalizing` reaches a caller only as the
   answer to a `cancel` whose runner still holds the lock at the deadline
-  (`core/spawn_service.py`, `cancel`). A row that says `unknown` is read for compatibility.
+  (`spawn/service.py`, `cancel`). A row that says `unknown` is read for compatibility.
 - **Who writes the end.** The process holding the launch lock writes the terminal status
   through `SpawnApplicationService.complete_spawn`, under the per-spawn mutation lock. When
   the runner died, the launch lock is free. Readers then *derive* a terminal status without

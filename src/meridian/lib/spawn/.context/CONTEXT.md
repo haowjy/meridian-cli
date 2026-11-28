@@ -1,4 +1,4 @@
-# Core lifecycle
+# Spawn lifecycle
 
 Root-only cleanup fails closed on malformed depth: treating it as root could
 reap work from a delegated process. A session-owned scope whose root is dead or

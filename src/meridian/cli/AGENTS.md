@@ -13,7 +13,7 @@ whole invocation; attribution from the source project cannot cross that boundary
 The sender for `message` is carried separately, not restored to the environment.
 A claimed ID reaches another project without `-C`, so nothing clears the caller's variables
 for a command that only reads, waits on or signals it: code that keys state by the caller
-goes through `lib/core/caller.py`, never `os.environ`, and a launch into another project
+goes through `lib/state/caller.py`, never `os.environ`, and a launch into another project
 (`--continue`) re-runs under `-C` in `continue_reentry.py`.
 
 A command that prints a JSON error of its own for failures raised before its handler
