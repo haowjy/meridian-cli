@@ -19,14 +19,11 @@ from meridian.lib.bootstrap.services import (
 )
 from meridian.lib.config.loader import load_config
 from meridian.lib.config.models import MeridianConfig
-from meridian.lib.core.caller import same_runtime_root
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.caller_boundary import CallerBoundaryCheck
-from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.context_ref import context_ref_values
 from meridian.lib.core.depth import max_depth_reached
 from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.core.lifecycle import SpawnLifecycleService
-from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.refs import RefNotFound, parse_ref
 from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.core.spawn_lifecycle import (
@@ -37,7 +34,6 @@ from meridian.lib.core.spawn_lifecycle import (
     is_active_spawn_status,
     is_terminal_spawn_status,
 )
-from meridian.lib.core.spawn_service import CancelOutcome
 from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.bundle import project_effective_policy
@@ -75,10 +71,14 @@ from meridian.lib.ops.spawn.idle import spawn_idle
 from meridian.lib.ops.work_attachment import resolve_current_work_alias
 from meridian.lib.ops.work_membership import active_session_work_ids, spawn_work_id, work_spawns
 from meridian.lib.platform.locking import try_lock_file
+from meridian.lib.spawn.lifecycle import SpawnLifecycleService
+from meridian.lib.spawn.service import CancelOutcome
 from meridian.lib.state import history_index, session_store, spawn_store, work_store
+from meridian.lib.state.caller import same_runtime_root
 from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.machine_identity import machine_identity_or_none
 from meridian.lib.state.machine_ids import recent_claim_roots
+from meridian.lib.state.native_identity import NativeSessionUnavailable
 from meridian.lib.state.paths import LaunchPaths, resolve_project_paths
 from meridian.lib.state.primary_meta import (
     read_primary_surface_metadata,

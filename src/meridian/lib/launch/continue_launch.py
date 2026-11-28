@@ -13,6 +13,8 @@ from meridian.lib.harness.plugin_hosted import is_plugin_hosted
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope.base import birth_time_unverified
 from meridian.lib.platform.process_scope.dispatch import terminate_scope_sync
+from meridian.lib.spawn.managed_primary import terminate_managed_primary_processes
+from meridian.lib.spawn.reaper import resolve_cleanup_claim
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import (
     Busy,
@@ -25,11 +27,9 @@ from meridian.lib.state.launch_lock import (
     shared_try,
 )
 from meridian.lib.state.liveness import is_process_alive_with_birth, is_process_dead_with_birth
-from meridian.lib.state.managed_primary import terminate_managed_primary_processes
 from meridian.lib.state.paths import LaunchPaths, RuntimePaths
 from meridian.lib.state.primary_meta import PrimaryMetadata, read_primary_metadata
 from meridian.lib.state.process_scope_projection import mark_scope_released, read_scope_projection
-from meridian.lib.state.reaper import resolve_cleanup_claim
 from meridian.lib.state.reaper_cleanup_claim import read_cleanup_claim
 from meridian.lib.state.session_identity import chat_owner_spawn
 from meridian.lib.state.session_store import chat_lock

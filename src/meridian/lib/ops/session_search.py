@@ -10,8 +10,7 @@ from typing import NamedTuple
 
 from pydantic import BaseModel, ConfigDict, computed_field
 
-from meridian.lib.core.caller import same_runtime_root
-from meridian.lib.core.context import RuntimeContext
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.runtime import (
     async_from_sync,
@@ -29,6 +28,7 @@ from meridian.lib.ops.session_transcript import (
     build_session_log_command,
     read_session_transcript,
 )
+from meridian.lib.state.caller import same_runtime_root
 from meridian.lib.state.history_index import (
     INITIALIZATION_TIMEOUT,
     QUERY_TIMEOUT,

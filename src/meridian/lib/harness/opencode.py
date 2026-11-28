@@ -12,13 +12,6 @@ from pathlib import Path
 from typing import ClassVar, Literal, cast
 
 from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.core.native_identity import (
-    NativeKey,
-    NativeKeyFields,
-    NativeSessionEvidence,
-    NativeSessionUnavailable,
-    Operation,
-)
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     BaseHarnessAdapter,
@@ -119,6 +112,13 @@ from meridian.lib.launch.composition import (
     render_task_context,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
+from meridian.lib.state.native_identity import (
+    NativeKey,
+    NativeKeyFields,
+    NativeSessionEvidence,
+    NativeSessionUnavailable,
+    Operation,
+)
 from meridian.lib.state.paths import LaunchPaths
 
 logger = logging.getLogger(__name__)

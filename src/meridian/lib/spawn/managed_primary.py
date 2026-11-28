@@ -80,7 +80,7 @@ def tear_down_dead_launch(
     """
 
     # Lazy to avoid a state -> core import cycle: core.process_cleanup imports state.
-    from meridian.lib.core.process_cleanup import (
+    from meridian.lib.spawn.cleanup import (
         cancel_managed_primary,
         terminate_recorded_spawn_scopes,
     )

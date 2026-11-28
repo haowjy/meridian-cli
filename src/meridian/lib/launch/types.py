@@ -7,10 +7,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from meridian.lib.core.context_ref import ContextRef
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+from meridian.lib.core.permission_policy import EnforcementReport
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.launch.composition import PromptDocument
 from meridian.lib.launch.request import NetworkOverrides, SessionRequest
-from meridian.lib.safety.policy import EnforcementReport
 
 _CONTINUATION_GUIDANCE = (
     "You are resuming an existing Meridian session. Continue from the current state, "

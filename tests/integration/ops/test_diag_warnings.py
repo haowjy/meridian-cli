@@ -183,7 +183,7 @@ def test_lockless_v3_queued_row_not_finalized(
     shown = spawn_show_sync(SpawnShowInput(spawn_id=spawn_id, project_root=project_root.as_posix()))
     assert is_active_spawn_status(shown.status)
 
-    from meridian.lib.state.reaper import reconcile_active_spawn
+    from meridian.lib.spawn.reaper import reconcile_active_spawn
 
     reconciled = reconcile_active_spawn(project_root, runtime_root, row)
     assert reconciled == row

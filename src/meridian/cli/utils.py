@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Literal, overload
 from meridian.cli.invocation import get_global_options
 
 if TYPE_CHECKING:
-    from meridian.lib.core.context import RuntimeContext
+    from meridian.lib.context.runtime import RuntimeContext
 
 
 def resolve_cli_project_root() -> Path:
@@ -29,8 +29,8 @@ def resolve_cli_observer_context(*, observe: bool) -> "RuntimeContext":
     a same-project ``-C`` keeps it and may observe.
     """
 
-    from meridian.lib.core.caller import caller_identity
-    from meridian.lib.core.context import RuntimeContext
+    from meridian.lib.context.runtime import RuntimeContext
+    from meridian.lib.state.caller import caller_identity
 
     caller = caller_identity() if observe else None
     return RuntimeContext(

@@ -610,7 +610,7 @@ def update_spawn(
     )
     if not isinstance(outcome, Applied):
         return
-    from meridian.lib.core.telemetry import LifecycleEvent, next_spawn_sequence
+    from meridian.lib.telemetry.lifecycle import LifecycleEvent, next_spawn_sequence
     from meridian.lib.telemetry.observers import notify_observers
 
     record = outcome.after

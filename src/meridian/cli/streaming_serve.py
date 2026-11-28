@@ -17,7 +17,6 @@ from meridian.lib.bootstrap.services import (
     prepare_for_runtime_write,
 )
 from meridian.lib.core.domain import TerminalSpawnStatus
-from meridian.lib.core.native_identity import NativeIdentityError
 from meridian.lib.core.spawn_lifecycle import parse_terminal_status
 from meridian.lib.core.types import launched_harnesses
 from meridian.lib.harness.connections.base import HarnessConnection
@@ -37,6 +36,7 @@ from meridian.lib.ops.runtime import OperationRuntime
 from meridian.lib.ops.spawn.execute_init import build_spawn_mars_runtime
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
+from meridian.lib.state.native_identity import NativeIdentityError
 
 
 async def streaming_serve(

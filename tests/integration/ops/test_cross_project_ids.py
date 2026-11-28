@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 import meridian.lib.ops.spawn.api as spawn_api
-from meridian.lib.core.context import RuntimeContext
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.refs import RefAmbiguous, RefNotFound, project_named_scope
 from meridian.lib.ops.locate import SpawnHit, locate
 from meridian.lib.ops.spawn.models import SpawnWaitInput

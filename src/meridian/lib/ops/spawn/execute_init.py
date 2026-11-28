@@ -8,11 +8,11 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.bootstrap.services import build_spawn_lifecycle_service_from_roots
 from meridian.lib.config.project_paths import resolve_project_config_paths
-from meridian.lib.core.context import RuntimeContext
+from meridian.lib.context.resolved import ResolvedContext
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.depth import current_meridian_depth, max_depth_reached
 from meridian.lib.core.domain import Spawn
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
-from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.core.spawn_start import SpawnStartMetadata

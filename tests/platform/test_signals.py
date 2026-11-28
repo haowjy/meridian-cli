@@ -15,7 +15,7 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.resolve import resolve_startup_timeout_seconds
-from meridian.lib.launch.signals import (
+from meridian.lib.platform.signals import (
     SignalCallbackReceiver,
     SignalCoordinator,
 )
@@ -167,7 +167,7 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
 def test_signal_coordinator_dispatches_signal_to_all_active_receivers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import meridian.lib.launch.signals as signals_module
+    import meridian.lib.platform.signals as signals_module
 
     installed_handlers: dict[signal.Signals, object] = {}
 
@@ -210,7 +210,7 @@ def test_signal_coordinator_dispatches_signal_to_all_active_receivers(
 def _install_signal_spies(
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[list[tuple[int, object]], list[tuple[int, signal.Signals]]]:
-    import meridian.lib.launch.signals as signals_module
+    import meridian.lib.platform.signals as signals_module
 
     installed: list[tuple[int, object]] = []
     kills: list[tuple[int, signal.Signals]] = []
@@ -230,7 +230,7 @@ def _install_signal_spies(
 def test_signal_callback_receiver_rapid_burst_routes_to_callback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import meridian.lib.launch.signals as signals_module
+    import meridian.lib.platform.signals as signals_module
 
     clock = {"now": 100.0}
     monkeypatch.setattr(signals_module.time, "monotonic", lambda: clock["now"])
@@ -254,7 +254,7 @@ def test_signal_callback_receiver_rapid_burst_routes_to_callback(
 def test_signal_callback_receiver_sub_grace_stream_escalates_on_later_signal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import meridian.lib.launch.signals as signals_module
+    import meridian.lib.platform.signals as signals_module
 
     clock = {"now": 100.0}
     monkeypatch.setattr(signals_module.time, "monotonic", lambda: clock["now"])
@@ -280,7 +280,7 @@ def test_signal_callback_receiver_sub_grace_stream_escalates_on_later_signal(
 def test_signal_callback_receiver_cross_signal_repeats_do_not_escalate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import meridian.lib.launch.signals as signals_module
+    import meridian.lib.platform.signals as signals_module
 
     clock = {"now": 100.0}
     monkeypatch.setattr(signals_module.time, "monotonic", lambda: clock["now"])
@@ -304,7 +304,7 @@ def test_signal_callback_receiver_cross_signal_repeats_do_not_escalate(
 def test_signal_callback_receiver_delayed_repeat_escalates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import meridian.lib.launch.signals as signals_module
+    import meridian.lib.platform.signals as signals_module
 
     clock = {"now": 100.0}
     monkeypatch.setattr(signals_module.time, "monotonic", lambda: clock["now"])
@@ -328,7 +328,7 @@ def test_signal_callback_receiver_delayed_repeat_escalates(
 def test_mask_termination_defers_then_redelivers_once_and_a_late_repeat_escapes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import meridian.lib.launch.signals as signals_module
+    import meridian.lib.platform.signals as signals_module
 
     clock = {"now": 100.0}
     monkeypatch.setattr(signals_module.time, "monotonic", lambda: clock["now"])

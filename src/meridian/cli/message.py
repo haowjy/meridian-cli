@@ -21,7 +21,6 @@ from cyclopts import Parameter
 from meridian.cli.app_tree import message_app
 from meridian.cli.invocation import get_global_options
 from meridian.cli.machine_forward import base_caller, other_machine
-from meridian.lib.core.caller import caller_identity, caller_project_root
 from meridian.lib.core.caller_boundary import (
     SANDBOX_BLOCKED_SENTENCE,
     SANDBOX_DENIAL_ERRNOS,
@@ -63,6 +62,7 @@ from meridian.lib.message.result import (
 from meridian.lib.ops.locate import locate_run, run_is_live
 from meridian.lib.ops.runtime import resolve_project_authority, resolve_runtime_root_for_read
 from meridian.lib.ops.spawn.idle import row_idle
+from meridian.lib.state.caller import caller_identity, caller_project_root
 from meridian.lib.state.machine_ids import claim_root
 from meridian.lib.state.runtime_root import runtime_root_project_id
 from meridian.lib.state.saved_machines import SavedMachine

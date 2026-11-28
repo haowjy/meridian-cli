@@ -6,8 +6,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.core.context import RuntimeContext
-from meridian.lib.core.native_identity import NativeIdentityError
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.refs import RefNotFound, parse_ref
 from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.util import FormatContext
@@ -17,6 +16,7 @@ from meridian.lib.ops.runtime import async_from_sync
 from meridian.lib.ops.session_transcript import read_session_transcript
 from meridian.lib.state import session_identity
 from meridian.lib.state.history_index import indexed_spawn_scan
+from meridian.lib.state.native_identity import NativeIdentityError
 from meridian.lib.state.paths import LaunchPaths
 
 _TOOL_CALL_RE = re.compile(r"^\[tool:\s*(?P<name>[^\]\s]+)(?:\s+(?P<body>.*))?\]$", re.DOTALL)

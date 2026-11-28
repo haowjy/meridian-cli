@@ -73,7 +73,7 @@ def terminate_recorded_spawn_scope(
     grace_seconds: float = 5.0,
 ) -> list[CleanupResult]:
 
-    from meridian.lib.core.process_cleanup import terminate_spawn_scopes
+    from meridian.lib.spawn.cleanup import terminate_spawn_scopes
 
     return terminate_spawn_scopes(
         runtime_root,

@@ -12,7 +12,6 @@ if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
 from meridian.lib.core.delivery import DeliveryKind, TransportDead
-from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import project_subprocess_spec
 from meridian.lib.harness.claude_drain import ClaudeNativeTaskSource
@@ -42,6 +41,7 @@ from meridian.lib.observability.trace_helpers import (
 )
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
+from meridian.lib.telemetry.lifecycle import StartupPhase, StartupPhaseEmitter
 
 logger = logging.getLogger(__name__)
 

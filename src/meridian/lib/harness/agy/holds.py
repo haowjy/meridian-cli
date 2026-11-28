@@ -74,7 +74,7 @@ def call_env(row: HeldRow) -> dict[str, str]:
     only from the conversation's row; the config set in that shell stays.
     """
 
-    from meridian.lib.core.resolved_context import ResolvedContext
+    from meridian.lib.context.resolved import ResolvedContext
     from meridian.lib.core.types import SpawnId
 
     env = session_free_env(os.environ)

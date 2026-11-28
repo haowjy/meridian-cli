@@ -92,7 +92,7 @@ def launch_primary(
     from meridian.lib.autosync.clones import clone_launch_warning, enclosing_clone
     from meridian.lib.catalog.catalog_session import CatalogSession
     from meridian.lib.config.project_root import resolve_project_root_resolution
-    from meridian.lib.core.context import resolve_runtime_context
+    from meridian.lib.context.runtime import resolve_runtime_context
     from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 
     from .context import (

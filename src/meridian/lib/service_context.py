@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING
 from meridian.lib.config.models import MeridianConfig
 
 if TYPE_CHECKING:
-    from meridian.lib.core.lifecycle import SpawnLifecycleService
     from meridian.lib.ops.runtime import RuntimeAuthoritySnapshot
+    from meridian.lib.spawn.lifecycle import SpawnLifecycleService
 
 
 @dataclass(frozen=True)

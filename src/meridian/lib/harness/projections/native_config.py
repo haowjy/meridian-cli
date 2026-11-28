@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 from typing import cast
 
 from meridian.lib.core.execution_policy import NativeConfig
-from meridian.lib.safety.policy import EnforcementReport, ReportLine
+from meridian.lib.core.permission_policy import EnforcementReport, ReportLine
 
 CODEX_CONFIG_MODEL_KEY = "model"
 CODEX_CONFIG_REASONING_EFFORT_KEY = "model_reasoning_effort"

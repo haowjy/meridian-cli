@@ -9,7 +9,6 @@ from typing import Protocol, cast
 import structlog
 
 from meridian.lib.core.domain import TerminalSpawnStatus
-from meridian.lib.core.lifecycle import LifecycleEvent, LifecycleHook
 from meridian.lib.hooks.builtin import BUILTIN_HOOKS
 from meridian.lib.hooks.builtin.base import BuiltinHook
 from meridian.lib.hooks.interval import IntervalTracker
@@ -23,6 +22,7 @@ from meridian.lib.hooks.types import (
     SpawnStatus,
     hooks_dispatch_enabled,
 )
+from meridian.lib.spawn.lifecycle import LifecycleEvent, LifecycleHook
 from meridian.plugin_api import Hook as PluginHook
 
 

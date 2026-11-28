@@ -55,7 +55,7 @@ def test_read_projection_does_not_reap_recorded_scope_but_explicit_reconcile_doe
     monkeypatch.setenv("_MERIDIAN_RUNTIME_DIR", str(runtime_root))
     terminated_scopes = recording_scope_cleanup(
         monkeypatch,
-        "meridian.lib.core.process_cleanup.terminate_scope_sync",
+        "meridian.lib.spawn.cleanup.terminate_scope_sync",
     )
 
     from meridian.lib.ops.spawn.api import spawn_list_sync, spawn_stats_sync, spawn_wait_sync

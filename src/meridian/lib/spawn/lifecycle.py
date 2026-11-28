@@ -15,20 +15,20 @@ from meridian.lib.core.spawn_lifecycle import (
     SpawnReservation,
     is_terminal_spawn_status,
 )
-from meridian.lib.core.telemetry import (
+from meridian.lib.platform.signals import signal_coordinator
+from meridian.lib.state.launch_lock import LaunchSlot
+from meridian.lib.state.paths import LaunchPaths
+from meridian.lib.state.session_identity import spawn_owner_chat_id
+from meridian.lib.telemetry import LifecycleCorrelation, bind_lifecycle_correlation
+from meridian.lib.telemetry.lifecycle import (
     CORE_EVENTS,
     SpawnFailureCategory,
     allocate_spawn_sequence,
     next_spawn_sequence,
 )
-from meridian.lib.core.telemetry import (
+from meridian.lib.telemetry.lifecycle import (
     LifecycleEvent as TelemetryLifecycleEvent,
 )
-from meridian.lib.launch.signals import signal_coordinator
-from meridian.lib.state.launch_lock import LaunchSlot
-from meridian.lib.state.paths import LaunchPaths
-from meridian.lib.state.session_identity import spawn_owner_chat_id
-from meridian.lib.telemetry import LifecycleCorrelation, bind_lifecycle_correlation
 from meridian.lib.telemetry.observers import notify_observers
 
 if TYPE_CHECKING:
@@ -666,7 +666,7 @@ def _hook_env(project_root: Path, runtime_root: Path) -> Mapping[str, str] | Non
     chat and work names don't mean anything there)."""
 
     from meridian.env_registry import env_toward_project
-    from meridian.lib.core.caller import caller_runtime_root, same_runtime_root
+    from meridian.lib.state.caller import caller_runtime_root, same_runtime_root
 
     caller_root = caller_runtime_root()
     if caller_root is None or same_runtime_root(caller_root, runtime_root):

@@ -4,10 +4,10 @@ import multiprocessing
 from pathlib import Path
 from typing import TypedDict
 
-from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.types import PrimarySessionMetadata
+from meridian.lib.spawn.lifecycle import SpawnLifecycleService
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn.repository import Applied, Declined

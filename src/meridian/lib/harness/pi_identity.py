@@ -14,7 +14,7 @@ from typing import Literal, cast
 
 import structlog
 
-from meridian.lib.core.native_identity import (
+from meridian.lib.state.native_identity import (
     NativeEntryMismatch,
     NativeIdentity,
     NativeKeyFields,

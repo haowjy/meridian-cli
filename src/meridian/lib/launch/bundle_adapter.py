@@ -34,7 +34,15 @@ from meridian.lib.catalog.mars_roots import (
     resolve_mars_roots,
 )
 from meridian.lib.core.domain import AvailableSkillEntry, SkillDeliveryMode
+from meridian.lib.core.permission_policy import (
+    Allow,
+    Hosts,
+    NetworkPolicy,
+    SandboxDerivedNetwork,
+    canonical_host,
+)
 from meridian.lib.core.route_report import AssessmentReport, RouteDecisionReport
+from meridian.lib.core.tools import PLATFORM_ORIGIN, ToolRule
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
@@ -44,14 +52,6 @@ from meridian.lib.launch.launch_types import (
     TerminalSurfaceMode,
 )
 from meridian.lib.launch.request import NetworkOverrides
-from meridian.lib.safety.policy import (
-    Allow,
-    Hosts,
-    NetworkPolicy,
-    SandboxDerivedNetwork,
-    canonical_host,
-)
-from meridian.lib.tools import PLATFORM_ORIGIN, ToolRule
 from meridian.lib.utils.json_shapes import json_object
 
 if TYPE_CHECKING:

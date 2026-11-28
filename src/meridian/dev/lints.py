@@ -599,7 +599,7 @@ _CONTEXT_ENV_NAME = re.compile(r"MERIDIAN_(?:CONTEXT|ACTIVE_WORK)_[A-Z0-9_]+")
 CONTEXT_ENV_ALLOWLIST: dict[tuple[str, str], str] = {
     ("meridian/env_registry.py", "*"): "Declares the variables.",
     (
-        "meridian/lib/core/resolved_context.py",
+        "meridian/lib/context/resolved.py",
         "*",
     ): "The resolver: reads launch input, writes child env.",
     ("meridian/lib/launch/constants.py", "*"): "Names the variables a child env keeps or drops.",
@@ -687,7 +687,7 @@ def stale_context_env_allowlist(sources: Sources) -> list[Violation]:
 
 # The caller's spawn ID means something only together with its runtime root, so the
 # process environment is read for it in one place that returns the pair.
-_CALLER_ENV_OWNER = "meridian/lib/core/caller.py"
+_CALLER_ENV_OWNER = "meridian/lib/state/caller.py"
 _CALLER_ENV_NAME = "MERIDIAN_SPAWN_ID"
 
 
@@ -723,13 +723,13 @@ def _is_os_environ(node: ast.expr) -> bool:
 
 
 def caller_env_read_violations(sources: Sources) -> list[Violation]:
-    """Reject reading the caller's spawn ID from ``os.environ`` outside ``lib/core/caller.py``."""
+    """Reject reading the caller's spawn ID from ``os.environ`` outside ``lib/state/caller.py``."""
 
     return [
         Violation(
             module.path,
             line,
-            "the caller's spawn ID is read through meridian.lib.core.caller "
+            "the caller's spawn ID is read through meridian.lib.state.caller "
             "(caller_identity, caller_in, caller_spawn_id): an ID without its runtime root "
             "names a different session in another project.",
         )

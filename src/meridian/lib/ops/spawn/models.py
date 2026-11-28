@@ -6,10 +6,10 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validat
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+from meridian.lib.core.permission_policy import EnforcementReport, format_report_lines
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status, is_terminal_spawn_status
 from meridian.lib.core.util import FormatContext
 from meridian.lib.launch.request import NetworkOverrides, SessionRequest
-from meridian.lib.safety.policy import EnforcementReport, format_report_lines
 from meridian.lib.state.spawn.model import RunBoundaryOutcome
 
 

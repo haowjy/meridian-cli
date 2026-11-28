@@ -6,9 +6,9 @@ from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Protocol, cast
 
-from meridian.lib.core.native_identity import NativeIdentityError
 from meridian.lib.harness.claude_sessions import resolve_claude_native_session_file
 from meridian.lib.harness.idle_types import CacheTtl
+from meridian.lib.state.native_identity import NativeIdentityError
 
 _TAIL_CHUNK_BYTES = 64 * 1024
 

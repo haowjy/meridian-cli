@@ -4,10 +4,10 @@ from collections.abc import Collection, Generator
 from contextlib import contextmanager
 from pathlib import Path
 
-from meridian.lib.core.native_identity import BindSource, NativeKeyFields
 from meridian.lib.core.types import ChatId, HarnessSessionId
 from meridian.lib.state import session_fold as sessions
 from meridian.lib.state.native_binding import BindOutcome, Bound, Conflict, bind, report_conflict
+from meridian.lib.state.native_identity import BindSource, NativeKeyFields
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.session_store import (
     append_chat_rows,

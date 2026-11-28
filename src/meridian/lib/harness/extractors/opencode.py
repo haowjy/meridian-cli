@@ -6,7 +6,6 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 
 from meridian.lib.core.domain import TokenUsage
-from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.harness.common import coerce_optional_float, coerce_optional_int
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.opencode_report import extract_opencode_session_id
@@ -15,6 +14,7 @@ from meridian.lib.harness.opencode_snapshot import (
     read_opencode_v2_turn,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.state.native_identity import NativeKey
 from meridian.lib.state.permission_journal import PermissionDenial
 
 from .base import AttemptFold, HarnessExtractor

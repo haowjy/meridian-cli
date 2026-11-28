@@ -24,7 +24,6 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import NamedTuple
 
-from meridian.lib.core.caller import same_runtime_root
 from meridian.lib.core.refs import (
     INBOX_IS_NO_SESSION,
     SELECTORS,
@@ -41,6 +40,7 @@ from meridian.lib.machines.caller import is_machine_call
 from meridian.lib.machines.resolve import MachineError, resolve_machine, this_machine
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import session_identity, session_store, spawn_store
+from meridian.lib.state.caller import same_runtime_root
 from meridian.lib.state.history_changes import HistoryCoordinationError
 from meridian.lib.state.history_index import (
     HistoryIndex,

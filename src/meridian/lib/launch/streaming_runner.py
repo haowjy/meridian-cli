@@ -21,9 +21,6 @@ from meridian.lib.bootstrap.services import (
 from meridian.lib.config.models import MeridianConfig
 from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.domain import Spawn, SpawnStatus, TerminalSpawnStatus
-from meridian.lib.core.native_identity import (
-    NativeIdentityError,
-)
 from meridian.lib.core.spawn_lifecycle import (
     SIGNAL_STOP_BUDGET_SECS,
     ExecutionTerminalFacts,
@@ -82,11 +79,14 @@ from meridian.lib.launch.runner_helpers import (
     spawn_kind as _spawn_kind,
 )
 from meridian.lib.launch.session_scope import SessionAttempt
-from meridian.lib.launch.signals import signal_coordinator, signal_to_exit_code
 from meridian.lib.launch.streaming.terminal_arbitrator import TriggerKind, arbitrate_terminal
+from meridian.lib.platform.signals import signal_coordinator, signal_to_exit_code
 from meridian.lib.safety.budget import Budget, BudgetBreach, LiveBudgetTracker
 from meridian.lib.safety.guardrails import run_guardrails
 from meridian.lib.state import spawn_store
+from meridian.lib.state.native_identity import (
+    NativeIdentityError,
+)
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn.model import (
     BACKGROUND_LAUNCH_MODE,
@@ -97,8 +97,8 @@ from meridian.lib.state.spawn_status import read_cancel_intent
 from meridian.lib.streaming.spawn_manager import DrainOutcome, SpawnManager
 
 if TYPE_CHECKING:
-    from meridian.lib.core.lifecycle import SpawnLifecycleService
     from meridian.lib.harness.connections.base import RawHarnessEvent
+    from meridian.lib.spawn.lifecycle import SpawnLifecycleService
     from meridian.lib.state.spawn.model import CancelIntent
 
 _DEFAULT_CONFIG = MeridianConfig()

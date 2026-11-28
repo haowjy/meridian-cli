@@ -28,7 +28,6 @@ from meridian.lib.core.delivery import (
     DeliveryRefused,
     TransportDead,
 )
-from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import (
     project_managed_primary_backend_command,
@@ -81,6 +80,7 @@ from meridian.lib.observability.trace_helpers import (
     trace_wire_send,
 )
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot, ScopedProcessHandle
+from meridian.lib.telemetry.lifecycle import StartupPhase, StartupPhaseEmitter
 
 logger = logging.getLogger(__name__)
 _STARTUP_STDERR_MAX_BYTES = 16 * 1024

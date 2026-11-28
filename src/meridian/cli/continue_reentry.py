@@ -12,7 +12,6 @@ import os
 from collections.abc import Sequence
 from pathlib import Path
 
-from meridian.lib.core.caller import same_runtime_root
 from meridian.lib.core.refs import RefNotFound, parse_ref, project_named_scope
 from meridian.lib.ops.locate import (
     Untracked,
@@ -22,6 +21,7 @@ from meridian.lib.ops.locate import (
 )
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.platform.python_module import module_argv
+from meridian.lib.state.caller import same_runtime_root
 from meridian.lib.state.machine_ids import claim_root
 
 _CONTINUE_COMMANDS = ((), ("spawn",))

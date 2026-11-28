@@ -241,9 +241,9 @@ async def test_serve_keeps_run_error_and_cleans_up_after_conclusion(
     run_fails: bool,
 ) -> None:
     from meridian.cli import streaming_serve as serve
-    from meridian.lib.core.native_identity import NativeEntryMismatch, NativeKeyFields
     from meridian.lib.harness.pi import PiAdapter
     from meridian.lib.launch.native_run import NativeRunOutcome
+    from meridian.lib.state.native_identity import NativeEntryMismatch, NativeKeyFields
     from meridian.lib.state.spawn.model import RunBoundaryOutcome
 
     install_boundary_shim(pi_runtime, "same")

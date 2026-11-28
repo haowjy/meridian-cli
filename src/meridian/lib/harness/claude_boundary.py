@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from meridian.lib.core.native_identity import (
+from meridian.lib.state.native_identity import (
     NativeKey,
     NativeObservation,
     NativeObservationBatch,

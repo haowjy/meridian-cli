@@ -3,7 +3,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.config.project_root import resolve_project_root_resolution
-from meridian.lib.core.context import RuntimeContext
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.refs import RefNotFound
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.locate import RunTarget, resolve_spawn_target

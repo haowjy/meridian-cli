@@ -19,9 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
-from meridian.lib.core.native_identity import NativeIdentityError
 from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts, SpawnReservation
-from meridian.lib.core.spawn_service import SpawnApplicationService
 from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.attempt_facts import AttemptFacts
@@ -40,7 +38,9 @@ from meridian.lib.launch.native_run import (
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.launch.session_scope import SessionAttempt, session_scope
 from meridian.lib.launch.types import PrimarySessionMetadata
+from meridian.lib.spawn.service import SpawnApplicationService
 from meridian.lib.state.launch_lock import LaunchSlot
+from meridian.lib.state.native_identity import NativeIdentityError
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.session_store import update_session_spawn_id
 from meridian.lib.state.spawn.model import FOREGROUND_LAUNCH_MODE, SpawnRecord

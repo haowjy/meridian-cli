@@ -15,7 +15,6 @@ import structlog
 from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.core.clock import RealClock
 from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus, TokenUsage
-from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.refs import RefNotFound
 from meridian.lib.core.spawn_lifecycle import (
     CANCEL_GRACE_SECS,
@@ -50,13 +49,14 @@ from meridian.lib.launch.resolve import (
     resolve_resident_deadline_seconds,
     resolve_resident_poll_seconds,
 )
-from meridian.lib.launch.signals import signal_to_exit_code
 from meridian.lib.launch.types import PrimarySessionMetadata
+from meridian.lib.platform.signals import signal_to_exit_code
+from meridian.lib.spawn.lifecycle import SpawnLifecycleService
+from meridian.lib.spawn.managed_primary import tear_down_dead_launch
 from meridian.lib.state import spawn_store
 from meridian.lib.state.json_doc import write_model_once
 from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.liveness import is_process_alive_with_birth, signal_with_birth
-from meridian.lib.state.managed_primary import tear_down_dead_launch
 from meridian.lib.state.paths import LaunchPaths, RuntimePaths
 from meridian.lib.state.primary_meta import read_primary_metadata
 from meridian.lib.state.spawn.model import (
@@ -841,7 +841,7 @@ class SpawnApplicationService:
         """Best-effort cleanup for terminal managed orphan-primary spawns."""
         if record.terminal is None or not record.terminal.managed_scopes_pending:
             return
-        from meridian.lib.state.managed_primary import release_managed_primary_scopes
+        from meridian.lib.spawn.managed_primary import release_managed_primary_scopes
 
         release_managed_primary_scopes(
             self._runtime_root,

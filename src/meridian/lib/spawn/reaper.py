@@ -142,7 +142,7 @@ def resolve_cleanup_claim(runtime_root: Path, record: SpawnRecord) -> None:
         claimed = read_cleanup_claim(runtime_root, spawn_id)
         if not claimed:
             return
-        from meridian.lib.core.process_cleanup import terminate_scope_sync
+        from meridian.lib.spawn.cleanup import terminate_scope_sync
 
         unresolved: list[ProcessScopeSnapshot] = []
         for scope in claimed:

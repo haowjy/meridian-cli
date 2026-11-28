@@ -53,13 +53,13 @@ ControlServerFactory = Callable[[SpawnId, Path, "SpawnManager"], ControlSocketSe
 
 
 if TYPE_CHECKING:
-    from meridian.lib.core.spawn_service import SpawnApplicationService
     from meridian.lib.harness.connections.base import (
         ConnectionConfig,
         HarnessConnection,
     )
     from meridian.lib.harness.semantics import TerminalEventOutcome
     from meridian.lib.observability.debug_tracer import DebugTracer
+    from meridian.lib.spawn.service import SpawnApplicationService
 
 logger = logging.getLogger(__name__)
 EventHook = Callable[[RawHarnessEvent], None]

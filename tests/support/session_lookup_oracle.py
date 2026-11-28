@@ -15,7 +15,6 @@ from typing import cast
 from pydantic import BaseModel, ValidationError
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
-from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.types import (
     ChatId,
     HarnessSessionId,
@@ -27,6 +26,7 @@ from meridian.lib.platform.locking import (
 from meridian.lib.state.event_store import read_events, utc_now_iso
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.jsonl import append_durable_jsonl_line
+from meridian.lib.state.native_identity import NativeSessionUnavailable
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.session_fold import (
     ConversationModelSelection as ConversationModelSelection,

@@ -8,7 +8,7 @@ from cyclopts import App, Parameter
 
 from meridian.cli.ext_registration import register_extension_cli_group
 from meridian.cli.invocation import Emitter, emit
-from meridian.lib.core.context import RuntimeContext
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.extensions.registry import get_first_party_registry
 from meridian.lib.ops.context import (
     WorkCurrentInput,

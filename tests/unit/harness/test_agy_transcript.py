@@ -1,13 +1,13 @@
 import json
 from pathlib import Path
 
-from meridian.lib.core.native_identity import NativeKeyFields
 from meridian.lib.harness.agy.transcript import AgyReader
 from meridian.lib.harness.transcript import (
     INJECTED_ROLE,
     iter_transcript_events,
     parse_transcript_events_with_prologues,
 )
+from meridian.lib.state.native_identity import NativeKeyFields
 
 READER = AgyReader()
 _SYSTEM = (

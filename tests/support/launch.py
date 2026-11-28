@@ -8,7 +8,12 @@ from typing import Any
 from meridian.lib.catalog.mars_roots import MarsAgentNotFoundError
 from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.core.domain import AvailableSkillEntry
-from meridian.lib.core.native_identity import PrecreatedSession
+from meridian.lib.core.permission_policy import (
+    NetworkPolicy,
+    SandboxDerivedNetwork,
+    resolve_network_policy,
+)
+from meridian.lib.core.tools import NativeStatus, ToolAction, ToolRule, split_native
 from meridian.lib.core.types import HarnessId
 from meridian.lib.diagnostics import capture_library_diagnostics
 from meridian.lib.harness.registry import HarnessRegistry
@@ -31,13 +36,8 @@ from meridian.lib.launch.launch_types import (
 from meridian.lib.launch.policy_snapshot import build_launch_policy_snapshot
 from meridian.lib.launch.reference import load_reference_items
 from meridian.lib.launch.request import LaunchCompositionSurface, LaunchRuntime, SpawnRequest
-from meridian.lib.safety.policy import (
-    NetworkPolicy,
-    SandboxDerivedNetwork,
-    resolve_network_policy,
-)
+from meridian.lib.state.native_identity import PrecreatedSession
 from meridian.lib.state.paths import resolve_kb_dir
-from meridian.lib.tools import NativeStatus, ToolAction, ToolRule, split_native
 from tests.support.launch_paths import launch_paths
 
 
