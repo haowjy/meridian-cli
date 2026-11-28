@@ -14,7 +14,6 @@ from meridian.lib.core.native_identity import (
     Operation,
 )
 from meridian.lib.state.paths import LaunchPaths
-from meridian.lib.streaming.control_socket import UNIX_SOCKET_PATH_MAX_BYTES
 
 _READ_LIMIT = 64 * 1024
 _RECORD_LIMIT = 8 * 1024
@@ -77,14 +76,9 @@ def _iter_complete_records(
 
 
 def _usable_messaging_socket(value: object) -> Path | None:
+    # No length check: Claude bound this path, and connecting to one the platform can't
+    # address fails loudly in the sender rather than hiding the inbox.
     if not isinstance(value, str) or not value or not Path(value).is_absolute():
-        return None
-    try:
-        if len(value.encode()) > UNIX_SOCKET_PATH_MAX_BYTES:
-            return None
-    except UnicodeEncodeError:
-        return None
-    if any(ord(character) < 32 for character in value):
         return None
     return Path(value)
 

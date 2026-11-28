@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.core.delivery import TransportDead
+from meridian.lib.core.delivery import DeliveryRefused, TransportDead
 from meridian.lib.harness.bundle import PrimaryRouteContext
 from meridian.lib.harness.claude_boundary import claude_boundary_journal_path
 from meridian.lib.harness.claude_inbox import claude_primary_message_route
@@ -53,4 +53,16 @@ async def test_route_reports_gone_socket_as_transport_dead(tmp_path: Path) -> No
     assert route is not None
 
     with pytest.raises(TransportDead, match="inbox is gone"):
+        await route.deliver("unreachable", None)
+
+
+@pytest.mark.asyncio
+async def test_route_names_an_inbox_path_the_platform_cannot_address(tmp_path: Path) -> None:
+    _publish_inbox(tmp_path, Path("/tmp") / ("x" * 200) / "claude.sock")
+    route = claude_primary_message_route(
+        PrimaryRouteContext(launch_paths(tmp_path, "p1"), os.getpid())
+    )
+    assert route is not None
+
+    with pytest.raises(DeliveryRefused, match="too long"):
         await route.deliver("unreachable", None)

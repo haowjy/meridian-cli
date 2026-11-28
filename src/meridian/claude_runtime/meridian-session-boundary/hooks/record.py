@@ -13,25 +13,6 @@ _INPUT_LIMIT = 1024 * 1024
 _RECORD_LIMIT = 8 * 1024
 _JOURNAL_LIMIT = 1024 * 1024
 _SOURCES = frozenset({"startup", "resume", "fork", "clear", "compact"})
-# Mirrors meridian.lib.streaming.control_socket.UNIX_SOCKET_PATH_MAX_BYTES;
-# this hook is stdlib-only and cannot import it.
-_SOCKET_PATH_MAX_BYTES = 103 if sys.platform == "darwin" else 107
-
-
-def _messaging_socket() -> str | None:
-    value = os.environ.get("CLAUDE_CODE_MESSAGING_SOCKET")
-    try:
-        encoded_length = len(value.encode()) if value else 0
-    except UnicodeEncodeError:
-        return None
-    if (
-        not value
-        or encoded_length > _SOCKET_PATH_MAX_BYTES
-        or not Path(value).is_absolute()
-        or any(ord(character) < 32 for character in value)
-    ):
-        return None
-    return value
 
 
 def record() -> None:
@@ -75,8 +56,9 @@ def record() -> None:
         "session_id": session_id,
         "transcript_path": transcript,
     }
-    messaging_socket = _messaging_socket()
-    if messaging_socket is not None:
+    # Claude chose this path and bound it; Meridian's reader decides whether it can use it.
+    messaging_socket = os.environ.get("CLAUDE_CODE_MESSAGING_SOCKET")
+    if messaging_socket:
         record_payload["messaging_socket"] = messaging_socket
     line = (
         b"\n"

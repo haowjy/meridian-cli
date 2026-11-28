@@ -45,7 +45,9 @@ def _post(inbox: Path, text: str) -> None:
         except OSError as exc:
             if exc.errno in {errno.ENOENT, errno.ECONNREFUSED}:
                 raise TransportDead("Claude's inbox is gone") from exc
-            raise DeliveryRefused(f"Could not reach Claude's inbox: {exc.strerror or exc}") from exc
+            raise DeliveryRefused(
+                f"Could not reach Claude's inbox at {inbox}: {exc.strerror or exc}"
+            ) from exc
         client.sendall(wire_message)
 
         try:

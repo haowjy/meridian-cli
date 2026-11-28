@@ -32,6 +32,7 @@ from meridian.lib.streaming.control_socket import (
     ControlSocketServer,
     control_socket_path,
     prepare_socket_directory,
+    socket_directory,
 )
 from tests.support.launch_paths import launch_paths
 
@@ -52,7 +53,8 @@ async def test_claude_primary_message_reaches_published_inbox(
         prompt="primary",
         worker_pid=os.getpid(),
     )
-    inbox = tmp_path / "inbox.sock"
+    # Claude binds its inbox under a short directory; pytest's macOS tmp_path is too long.
+    inbox = socket_directory().parent / "claude-inbox.sock"
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(str(inbox))
     server.listen()
@@ -115,6 +117,7 @@ async def test_claude_primary_message_reaches_published_inbox(
             result = await message_cli.send_message("p1", "Reply exactly ACK", sender_spawn_id="p2")
     finally:
         server.close()
+        inbox.unlink(missing_ok=True)
         receiver.join(timeout=2)
 
     assert not receiver.is_alive()
