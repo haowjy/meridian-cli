@@ -226,8 +226,8 @@ def test_qualification_matrix_and_apply_removes_only_runner_files(tmp_path: Path
 def test_reads_still_work_after_prune(tmp_path: Path) -> None:
     from meridian.lib.ops.session_search import SessionSearchInput, session_search_sync
     from meridian.lib.ops.session_transcript import read_session_transcript
-    from meridian.lib.ops.spawn.api import spawn_show_sync
     from meridian.lib.ops.spawn.models import SpawnShowInput
+    from meridian.lib.ops.spawn.read import spawn_show_sync
 
     project, root, store = corpus(tmp_path)
     key = add_spawn(root, store, 1)

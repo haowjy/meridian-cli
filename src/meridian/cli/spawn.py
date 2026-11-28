@@ -44,7 +44,20 @@ from meridian.lib.launch.continue_replay import MODEL_OVERRIDE_WARNING
 from meridian.lib.launch.request import NetworkOverrides
 from meridian.lib.launch.resolve import resolve_agent_launch_input
 from meridian.lib.machines.caller import require_own_session, require_project_or_global
-from meridian.lib.ops.spawn.api import (
+from meridian.lib.ops.spawn.control import (
+    spawn_cancel_all_sync,
+    spawn_cancel_sync,
+    spawn_done_sync,
+    spawn_rearm_sync,
+)
+from meridian.lib.ops.spawn.create import (
+    spawn_create_sync,
+)
+from meridian.lib.ops.spawn.follow_up import (
+    spawn_continue_sync,
+    spawn_fork_sync,
+)
+from meridian.lib.ops.spawn.models import (
     SpawnActionOutput,
     SpawnCancelAllInput,
     SpawnCancelInput,
@@ -52,6 +65,7 @@ from meridian.lib.ops.spawn.api import (
     SpawnContinueInput,
     SpawnCreateInput,
     SpawnForkInput,
+    SpawnLaunchOptionUpdates,
     SpawnListInput,
     SpawnRearmInput,
     SpawnShowInput,
@@ -60,27 +74,24 @@ from meridian.lib.ops.spawn.api import (
     SpawnStatusInput,
     SpawnSubagentsInput,
     SpawnWaitInput,
-    spawn_cancel_all_sync,
-    spawn_cancel_sync,
-    spawn_children_sync,
-    spawn_continue_sync,
-    spawn_create_sync,
-    spawn_done_sync,
-    spawn_fork_sync,
-    spawn_list_sync,
-    spawn_rearm_sync,
-    spawn_show_sync,
-    spawn_stats_sync,
-    spawn_status_sync,
-    spawn_subagents_sync,
-    spawn_wait_sync,
+    normalize_goal,
 )
-from meridian.lib.ops.spawn.models import SpawnLaunchOptionUpdates, normalize_goal
 from meridian.lib.ops.spawn.owed import (
     SpawnAckInput,
     SpawnCollectInput,
     ack_owed_sync,
     collect_owed_sync,
+)
+from meridian.lib.ops.spawn.read import (
+    spawn_children_sync,
+    spawn_list_sync,
+    spawn_show_sync,
+    spawn_stats_sync,
+    spawn_status_sync,
+    spawn_subagents_sync,
+)
+from meridian.lib.ops.spawn.wait import (
+    spawn_wait_sync,
 )
 
 logger = structlog.get_logger(__name__)
