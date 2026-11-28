@@ -51,7 +51,6 @@ class NotifyHook:
     supported_events: tuple[HookEventName, ...] | None = NOTIFICATION_EVENTS
     default_interval: str | None = None
     options_model: type[BaseModel] = NotifyOptions
-    # Unnamed rows are all `notify`, so a row on an event replaces its default route.
 
     def check_requirements(self) -> tuple[bool, str | None]:
         return True, None
