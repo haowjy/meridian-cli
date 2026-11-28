@@ -1,7 +1,8 @@
 # Meridian idle plugin
 
 A Claude Code mod that tells Meridian when a session goes idle, what work the
-turn left running, and when the user comes back. Meridian decides what to do
+turn left running, when the user comes back, and when each main-loop turn
+starts and ends (`spawn list`'s `activity`). Meridian decides what to do
 about it: a push notification, and a warning that the prompt cache is about to
 expire. For those the mod only senses and runs the timers Meridian places.
 It submits two kinds of prompt on its own. The state reminder asks the model to
@@ -14,24 +15,30 @@ and the rest on its own timer.
 
 ## What it does
 
-Every `meridian idle` command below carries `--interactive`; the table omits
-that common flag for readability.
+Every `meridian idle` command below but `activity` carries `--interactive`; the
+table omits that common flag for readability.
 
 | Claude hook | Meridian call | Why |
 |---|---|---|
+| `session.start` (TUI only) | `meridian idle activity idle --harness claude` | The session has no turn running. Sent whatever the idle config says, so turning idle notices off does not turn `activity` off; never under `claude -p`. |
+| `turn.start` without `agentId` | `meridian idle activity turn_active --harness claude` | A main-loop turn started, whatever started it: a typed prompt, a task notification, a peer message, a wake. Subagent turns carry `agentId` and are not reported. Sent with idle off too. |
+| `turn.complete` without `agentId`, idle off | `meridian idle activity idle --harness claude` | The turn ended (any reason: `answer`, `aborted` on Esc, `error`). With idle on the arm below carries the end instead, so a turn end costs one process. |
 | `session.start` (TUI only) | `meridian idle config --harness claude` | Stays inert unless the role gate and the config say `enabled`. Under `claude -p` (`isInteractive === false`, no surface) it never calls Meridian. |
 | `session.start`, after a reload or resume | `meridian idle status --json` | Rebuilds timers from the stored schedule of this session's open stretch, skipping stages already done. |
-| `turn.complete` without `agentId` | `meridian idle arm --harness claude --session <id> [--background-tasks=<json>] [--user-text=...] [--assistant-text=...]` | A main-loop turn ended. Core resolves the recorded native transcript store through the inherited `MERIDIAN_CHAT_ID`; the mod never derives it from the session's mutable cwd. The mod sends the last composer prompt and the event's answer as notification excerpts; injected origins and system reminders are excluded. `--background-tasks` forwards a bounded prefix of the `background_tasks` from the `classic.Stop` that precedes the turn's end, each as `{kind, command?}`: subagents and workflows are `agent`, monitors `watcher`, and shells are `shell` when their full command fits the bound or `other` otherwise. Core alone decides what they mean: it holds the push while work that wakes the session runs (that turn arms again), delays it for other tasks, and drops the warning when a `spawn wait` yields before the cache goes cold. A new or re-anchored schedule returns absolute `push_at` / `warn_at` (and `push_held` with the reason, for the log); an absorbed arm keeps matching timers or recovers them from `status`. |
+| `turn.complete` without `agentId` | `meridian idle arm --harness claude --session <id> [--background-tasks=<json>] [--user-text=...] [--assistant-text=...]` | A main-loop turn ended; the arm also records `activity` idle. Core resolves the recorded native transcript store through the inherited `MERIDIAN_CHAT_ID`; the mod never derives it from the session's mutable cwd. The mod sends the last composer prompt and the event's answer as notification excerpts; injected origins and system reminders are excluded. `--background-tasks` forwards a bounded prefix of the `background_tasks` from the `classic.Stop` that precedes the turn's end, each as `{kind, command?}`: subagents and workflows are `agent`, monitors `watcher`, and shells are `shell` when their full command fits the bound or `other` otherwise. Core alone decides what they mean: it holds the push while work that wakes the session runs (that turn arms again), delays it for other tasks, and drops the warning when a `spawn wait` yields before the cache goes cold. A new or re-anchored schedule returns absolute `push_at` / `warn_at` (and `push_held` with the reason, for the log); an absorbed arm keeps matching timers or recovers them from `status`. |
 | `classic.Notification` with `notification_type = "permission_prompt"` | `meridian idle needs-permission --harness claude --message <text>` | Claude reports that a main-loop or background-subagent permission prompt is still unanswered. Meridian forwards one stateless `notify.needs_permission` notice; other notification types are ignored. |
 | `prompt.submit` or `command.run` with origin `composer` (or `bridge`, the user's phone) | `meridian idle return --harness claude --session <id> --user-prompt` | The user is back. Timers are cancelled first, synchronously. |
 | timer: push, warn | `meridian idle fire push\|warn …` | Core sends the notification itself. The mod only reports that the timer fired. |
 | `fire warn` answers `act` with `remind: true` | `$.prompt.submit` (state reminder) | The cache warning fired and core wants the work item's state brought up to date. See State reminder. |
 | `fire warn` answers `act` without `remind`, keepwarm on | `$.prompt.submit` (ping 1) | The cache warning fired and the user opted in: keep the cache warm. See Keepwarm. |
-| `turn.start`, `turn.complete`, `tool.check` (main loop) | none | Find the ping's or reminder's turn by its nonce, read its reply, and deny tools that change anything while a ping runs. |
+| `turn.start`, `turn.complete`, `tool.check` (main loop) | none beyond the above | Find the ping's or reminder's turn by its nonce, read its reply, and deny tools that change anything while a ping runs. |
 | `prompt.edit`, `prompt.change`, `turn.complete` (main loop) | none | Remember when the prompt box was last touched or a turn last ended, so every injected prompt waits for a quiet box. |
 
 Injected prompts (`task-notification`, `peer`, `plugin`, `sdk`, scheduled
 triggers, Stop-hook continuations) are not returns.
+
+The calls run one at a time in hook order (`needs-permission` and the
+compaction excepted), so a turn's start never reaches Meridian after its end.
 
 The mod never sends a notification, reads Meridian config files or
 `MERIDIAN_*` variables, writes under `~/.meridian`, or prints to the terminal.

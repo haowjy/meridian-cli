@@ -26,10 +26,16 @@ See the [integration contract](../lib/harness/.context/pi-integration.md).
 meridian-permissions decides nothing itself: it asks the tool-policy evaluator about each tool
 call and blocks, prompts or lets it run on the answer (see `.context/CONTEXT.md`).
 
-Meridian-idle marks every core call `--interactive`. User input cancels timers
-synchronously and queues its return behind any in-flight arm without awaiting the
-CLI. Due push/warn timers call `meridian idle fire`; the core decides whether to
-notify.
+Meridian-idle marks every core call `--interactive` but `idle activity`. User input
+cancels timers synchronously and queues its return behind any in-flight arm without
+awaiting the CLI. A run arms at `agent_settled` (after retries, compaction and queued
+continuations), with the last `agent_end`'s excerpts. Due push/warn timers call
+`meridian idle fire`; the core decides whether to notify.
+
+It also reports `spawn list`'s `activity`, with idle notifications on or off: `idle` at
+`session_start`, `turn_active` at `agent_start` (once per run: a retry's second start is
+not sent again) and `idle` at `agent_settled`, through the same queue so edges arrive in
+order. With idle on the arm carries the end.
 
 ## Build and verify
 

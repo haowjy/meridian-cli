@@ -172,7 +172,10 @@ the owed-notice sweep, store); a second one is a package with `commands.run_comm
   Each hold also runs the idle sidecar (`lib/launch/hold_idle.py`: closes the conversation's
   old stretch, then `sidecar.run`) with `AgyIdleSensor` (`lib/harness/agy/idle.py`). The
   sensor asks `TurnState.running()` (same file) whether the turn is live: the `busy` file, plus
-  the cancel read above. On each turn end the sensor reads the transcript past an
+  the cancel read above. Each poll that sees the turn start or stop (an Esc counts as a stop) reports
+  it once through the hold's `record_turn_activity(launch, ...)`, which writes the row's
+  `primary_meta.json` (`activity` only: an agy row has no runner and no other field); a failed
+  write is logged to stderr and retried at the next poll. On each turn end the sensor reads the transcript past an
   in-memory offset (kept on the sensor, not persisted; a transcript that shrank is re-read).
   A step with `type` `USER_INPUT` and `source` `USER_EXPLICIT` is a typed prompt: a return,
   with its `created_at` as `returned_at_ms`. A wake's `SYSTEM_MESSAGE` (and hook-injected
