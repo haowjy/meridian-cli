@@ -44,8 +44,10 @@ Every `meridian mars` command that syncs (`sync`, `add`, `remove`, `upgrade`, `r
 `rename`, `override`, `adopt`, `link`), and `meridian init`'s `add` and `link`, passes
 Meridian's own bundle to the sync as `--provided-root meridian@<version>=<dir>`, so targets no
 harness Meridian launches (`.agy`) get Meridian's skills; Mars keeps that layer on later syncs.
-`meridian mars --user` passes it to the same commands, so a user-level agent that names a
-Meridian skill such as `work__meridian` is not reported as missing one.
+`meridian mars --user` passes it to the same commands. The user level installs nothing from
+it; with a Mars that counts a host's skills for every agent (later than 0.41.0), a user-level
+sync stops reporting a user-level agent that names a Meridian skill such as `work__meridian`
+as missing it.
 Launches read the bundle in place.
 
 Mars runs in your working directory and takes the nearest `mars.toml` above it. Inside a
