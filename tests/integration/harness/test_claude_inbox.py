@@ -13,6 +13,7 @@ from meridian.lib.core.delivery import DeliveryRefused, TransportDead
 from meridian.lib.harness.bundle import PrimaryRouteContext
 from meridian.lib.harness.claude_boundary import claude_boundary_journal_path
 from meridian.lib.harness.claude_inbox import claude_primary_message_route
+from meridian.lib.streaming.control_socket import socket_directory
 from tests.support.launch_paths import launch_paths
 
 
@@ -46,7 +47,8 @@ def test_route_waits_for_a_published_inbox(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_route_reports_gone_socket_as_transport_dead(tmp_path: Path) -> None:
-    _publish_inbox(tmp_path, tmp_path / "missing.sock")
+    # pytest's macOS tmp_path is too long for a socket address; Claude's inbox never is.
+    _publish_inbox(tmp_path, socket_directory().parent / "missing.sock")
     route = claude_primary_message_route(
         PrimaryRouteContext(launch_paths(tmp_path, "p1"), os.getpid())
     )
@@ -57,12 +59,18 @@ async def test_route_reports_gone_socket_as_transport_dead(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
-async def test_route_names_an_inbox_path_the_platform_cannot_address(tmp_path: Path) -> None:
-    _publish_inbox(tmp_path, Path("/tmp") / ("x" * 200) / "claude.sock")
+@pytest.mark.parametrize(
+    ("inbox", "error"),
+    [(Path("/tmp") / ("x" * 200) / "claude.sock", "too long"), (Path("claude.sock"), "relative")],
+)
+async def test_route_names_an_inbox_path_it_cannot_use(
+    tmp_path: Path, inbox: Path, error: str
+) -> None:
+    _publish_inbox(tmp_path, inbox)
     route = claude_primary_message_route(
         PrimaryRouteContext(launch_paths(tmp_path, "p1"), os.getpid())
     )
     assert route is not None
 
-    with pytest.raises(DeliveryRefused, match="too long"):
+    with pytest.raises(DeliveryRefused, match=f"{error}.*claude.sock|claude.sock.*{error}"):
         await route.deliver("unreachable", None)

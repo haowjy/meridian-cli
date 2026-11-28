@@ -31,8 +31,7 @@ class _Record(BaseModel):
     source: Literal["startup", "resume", "fork", "clear", "compact"]
     session_id: str = Field(min_length=1, max_length=256, pattern=r"^[a-zA-Z0-9_-]+$")
     transcript_path: str = Field(min_length=1, max_length=4096, pattern=r"^[^\x00-\x1f]+$")
-    # Typed at lookup, not here: a bad inbox field must never drop the identity record.
-    messaging_socket: object = None
+    messaging_socket: str | None = None
     # Older journals carry it and the model forbids extras; nothing reads it.
     recorded_at: object = None
 
@@ -73,14 +72,6 @@ def _iter_complete_records(
     for line in raw[: final_newline + 1].splitlines(keepends=True):
         next_cursor += len(line)
         yield next_cursor, _parse_record(line)
-
-
-def _usable_messaging_socket(value: object) -> Path | None:
-    # No length check: Claude bound this path, and connecting to one the platform can't
-    # address fails loudly in the sender rather than hiding the inbox.
-    if not isinstance(value, str) or not value or not Path(value).is_absolute():
-        return None
-    return Path(value)
 
 
 def read_observations(
@@ -126,7 +117,6 @@ def latest_messaging_socket(path: Path, *, pid: int) -> Path | None:
     for _, record in _iter_complete_records(raw):
         if record is None or record.pid != pid:
             continue
-        socket_path = _usable_messaging_socket(record.messaging_socket)
-        if socket_path is not None:
-            latest = socket_path
+        if record.messaging_socket:
+            latest = Path(record.messaging_socket)
     return latest

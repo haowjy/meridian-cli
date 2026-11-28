@@ -12,7 +12,11 @@ from typing import cast
 _INPUT_LIMIT = 1024 * 1024
 _RECORD_LIMIT = 8 * 1024
 _JOURNAL_LIMIT = 1024 * 1024
-_SOURCES = frozenset({"startup", "resume", "fork", "clear", "compact"})
+
+
+def _line(record_payload: dict[str, object]) -> bytes:
+    # A leading separator isolates a prior short/torn append from this record.
+    return b"\n" + json.dumps(record_payload, separators=(",", ":")).encode() + b"\n"
 
 
 def record() -> None:
@@ -31,43 +35,26 @@ def record() -> None:
     if not isinstance(decoded, dict):
         return
     payload = cast("dict[str, object]", decoded)
-    source = payload.get("source")
-    if (
-        payload.get("hook_event_name") != "SessionStart"
-        or not isinstance(source, str)
-        or source not in _SOURCES
-    ):
-        return
-    session_id = payload.get("session_id")
-    transcript = payload.get("transcript_path")
-    if not isinstance(session_id, str) or not isinstance(transcript, str):
-        return
-    native = Path(transcript)
-    if not native.is_absolute() or native.name != f"{session_id}.jsonl":
-        return
 
-    # A leading separator isolates a prior short/torn append from this record.
+    # Meridian's reader validates every field: the journal is a file it can find
+    # half-written anyway. Copy only these fields; the rest of the payload stays private.
     record_payload: dict[str, object] = {
         "v": 2,
         "launch_nonce": nonce,
         # The hook command execs this interpreter; its parent is Claude.
         "pid": os.getppid(),
-        "source": source,
-        "session_id": session_id,
-        "transcript_path": transcript,
+        "source": payload.get("source"),
+        "session_id": payload.get("session_id"),
+        "transcript_path": payload.get("transcript_path"),
     }
-    # Claude chose this path and bound it; Meridian's reader decides whether it can use it.
     messaging_socket = os.environ.get("CLAUDE_CODE_MESSAGING_SOCKET")
     if messaging_socket:
         record_payload["messaging_socket"] = messaging_socket
-    line = (
-        b"\n"
-        + json.dumps(
-            record_payload,
-            separators=(",", ":"),
-        ).encode()
-        + b"\n"
-    )
+    line = _line(record_payload)
+    if len(line) > _RECORD_LIMIT and record_payload.pop("messaging_socket", None):
+        # Only a socket value far past any OS's PATH_MAX gets here; the session's
+        # identity matters more than an inbox nobody could connect to.
+        line = _line(record_payload)
     if len(line) > _RECORD_LIMIT:
         return
 

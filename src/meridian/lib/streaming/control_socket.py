@@ -18,10 +18,8 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.atomic import atomic_replace
 
-# sockaddr_un.sun_path holds 104 bytes on macOS and 108 on Linux, so a socket under a
-# runtime root, a project or macOS's TMPDIR (/var/folders/...) can be unbindable. A fixed
-# /tmp root plus a hashed name keeps every path about 60 bytes. Runner and client
-# processes may also have different TMPDIR values; discovery must not depend on either.
+# Fixed, not TMPDIR: runner and client may have different TMPDIRs, and macOS's is long
+# enough to push a socket past sun_path's 104 bytes.
 _POSIX_SOCKET_ROOT = Path("/tmp")
 # One request is one line; asyncio's 64 KiB default would cap messages far below what
 # the harnesses accept.

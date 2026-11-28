@@ -5,8 +5,10 @@ a launcher-owned journal. It loads for primary and spawned Claude launches and
 does nothing outside a prepared Meridian launch.
 
 The hook records the launch nonce, parent PID, SessionStart source, native session ID, exact transcript path, and (when Claude
-publishes it) the `messaging_socket` path Claude bound, unfiltered. Meridian's reader ignores a
-relative path; a path the platform can't address fails the send with an error naming it.
+publishes it) the `messaging_socket` path Claude bound, unfiltered. The writer copies these
+fields without judging them; Meridian's reader validates every record, since it must survive a
+half-written journal anyway. A socket path Meridian can't use (relative, or too long for the
+platform's socket address) fails the send with an error naming it.
 Each record is one bounded JSONL line
 written with one `O_APPEND` write to a mode-0600 file. The stdlib-only writer
 never imports Meridian, starts a subprocess, creates a missing parent directory,

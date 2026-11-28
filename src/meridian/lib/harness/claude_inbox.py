@@ -29,6 +29,10 @@ _ROUTE_NOTE = (
 
 
 def _post(inbox: Path, text: str) -> None:
+    # Claude bound this path itself. One the platform can't address fails connect() below
+    # with a message naming it, so it gets no length check here.
+    if not inbox.is_absolute():
+        raise DeliveryRefused(f"Claude published a relative inbox path, {inbox}")
     wire_message = (
         json.dumps(
             {"type": "user", "message": {"role": "user", "content": text}},
