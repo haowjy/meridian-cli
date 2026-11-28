@@ -20,7 +20,6 @@ from meridian.lib.core.telemetry import (
     SpawnFailureCategory,
     allocate_spawn_sequence,
     next_spawn_sequence,
-    notify_observers,
 )
 from meridian.lib.core.telemetry import (
     LifecycleEvent as TelemetryLifecycleEvent,
@@ -30,6 +29,7 @@ from meridian.lib.state.launch_lock import LaunchSlot
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.session_identity import spawn_owner_chat_id
 from meridian.lib.telemetry import LifecycleCorrelation, bind_lifecycle_correlation
+from meridian.lib.telemetry.observers import notify_observers
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

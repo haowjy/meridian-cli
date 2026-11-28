@@ -39,7 +39,6 @@ from meridian.lib.core.spawn_lifecycle import (
 )
 from meridian.lib.core.spawn_service import CancelOutcome
 from meridian.lib.core.spawn_start import resolve_spawn_display_label
-from meridian.lib.core.telemetry import register_debug_trace_observer
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.bundle import project_effective_policy
 from meridian.lib.launch.continue_launch import (
@@ -108,6 +107,7 @@ from meridian.lib.state.user_paths import get_user_home, project_lifetime_lock_p
 from meridian.lib.state.work_state import slugify
 from meridian.lib.telemetry.init import setup_telemetry
 from meridian.lib.telemetry.observer import register_spawn_telemetry_observer
+from meridian.lib.telemetry.observers import register_debug_trace_observer
 from meridian.lib.telemetry.router import emit_telemetry
 
 from .execute import (

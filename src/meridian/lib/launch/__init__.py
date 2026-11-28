@@ -27,7 +27,7 @@ if TYPE_CHECKING:
         SurfacePolicyInput,
         resolve_launch_policy,
     )
-    from meridian.lib.launch.process import ProcessOutcome, run_harness_process
+    from meridian.lib.launch.process.runner import ProcessOutcome, run_harness_process
     from meridian.lib.launch.resolve import (
         ResolvedSkills,
     )
@@ -103,7 +103,7 @@ def launch_primary(
     )
     from .cwd import inheritable_task_dir
     from .plan import build_primary_launch_runtime, build_primary_spawn_request
-    from .process import run_harness_process
+    from .process.runner import run_harness_process
     from .types import LaunchResult
 
     resolved_project_root = resolve_project_root_resolution(project_root).project_root

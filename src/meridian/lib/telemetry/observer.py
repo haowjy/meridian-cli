@@ -4,7 +4,7 @@ import threading
 from typing import TYPE_CHECKING
 
 from meridian.lib.core.spawn_lifecycle import FAILURE_SPAWN_STATUSES
-from meridian.lib.core.telemetry import LifecycleObserverTier, register_observer
+from meridian.lib.telemetry.observers import LifecycleObserverTier, register_observer
 
 if TYPE_CHECKING:
     from meridian.lib.core.telemetry import LifecycleEvent
