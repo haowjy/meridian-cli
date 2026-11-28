@@ -6,6 +6,23 @@ Entries are rendered from merged PR bodies' `## Changelog` sections by the relea
 
 ## [Unreleased]
 
+## [0.28.1] - 2026-11-28
+
+### Upgrade notes
+- This build needs Mars 0.41.0, which installs with it. If Meridian runs an older `mars` instead, every launch fails with "The installed Mars does not accept --provided-root. Meridian requires mars >= 0.41.0". Upgrade Meridian the way you installed it, for example `uv tool upgrade meridian-cli`. See [configuration](https://github.com/haowjy/meridian-cli/blob/main/docs/configuration.md#the-inbox-router).
+
+### Added
+- Meridian ships the `inbox-router` agent profile, which the `meridian-comms` router starts to decide which session an inbox message goes to. `meridian spawn -a inbox-router` works in any directory with no `mars add`. Agents are found in the project's packages, then the user's, then the ones built into Meridian, so a package or project agent named `inbox-router` replaces the built-in one, and a name collision Mars renamed (`inbox-router__a`, `inbox-router__b`) still fails with the error that lists the renamed names. It cannot spawn and is not offered to other agents; `meridian spawn subagents --all` lists it with scope `provided`.
+- `[inbox.router]` in `~/.meridian/config.toml` sets the router's `model`, `harness` and `effort`. They rank below `--model`, `--harness`, `--effort` and their `MERIDIAN_*` variables, and above the profile and a Mars `[agents.inbox-router]` overlay. `--model` drops the `harness` set there. `[inbox]` is read from the user's config only: `meridian.toml`, `meridian.local.toml`, `--config` and `MERIDIAN_CONFIG` ignore it with a warning, as they do `[message]`.
+
+### Changed
+- Mars now finds every agent Meridian launches, continues, forks or replays tool rules for, and Meridian reads the profile file Mars chose, so the two can no longer disagree about which profile runs. Every lookup hands Mars Meridian's bundled agents and skills (`--provided-root`).
+- A launch no longer runs `mars provide`: Meridian's bundled skills and agents are read in place from the installed package. `meridian mars sync` and `meridian skills` still provide the skill bundle. A launch also no longer runs `mars build launch-bundle --help` to check for `--fallback-root`.
+- A missing agent now fails with Mars's message and one hint, `List the agents Mars finds: meridian spawn subagents --all`, for `-a`, `--fork` and a configured default alike. The old "Expected: .mars/agents/<name>.md … Run `meridian mars sync`" text and its user-packages variant are gone. `--fork` puts Mars's message first, then the `--fork-fresh` command to run.
+- A failed launch of an agent from user packages no longer adds the "comes from user packages; its model aliases must resolve in this project's Mars config" note. Meridian guessed that from which files existed, not from what Mars chose. [Mars configuration](https://github.com/haowjy/meridian-cli/blob/main/docs/configuration/mars.md) still explains the alias rule.
+- `mars_fallback` in `meridian config show` and `meridian context` is now `active` or `n/a`. `unsupported` is gone, since every Mars this build accepts has the fallback. The field stays.
+- A Mars that doesn't know a flag Meridian sends now fails with an error that puts the flag and the minimum Mars version in front of Mars's own text. A continued or replayed session whose agent no longer exists warns "Could not resolve agent …" (it said "Mars could not resolve agent …").
+
 ## [0.28.0] - 2026-11-28
 
 ### Upgrade notes
