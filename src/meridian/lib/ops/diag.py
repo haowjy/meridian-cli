@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.catalog.mars_cli import (
     MarsRoot,
     legacy_user_root,
+    legacy_user_root_message,
     mark_legacy_user_root_reported,
 )
 from meridian.lib.config.loader import load_user_config
@@ -736,7 +737,7 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
         else GlobalReport()
     )
 
-    # The legacy root's move steps print once, as doctor's finding, not again from this lookup.
+    # The legacy root's warning prints once, as doctor's finding, not again from this lookup.
     mark_legacy_user_root_reported()
     mars = mars_root_report(project_root)
     store = mars.root.store if mars.root is not None else None
@@ -761,8 +762,8 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
         warnings.append(
             DoctorWarning(
                 code="legacy_user_mars_root",
-                message=legacy.migration_message(),
-                payload={"path": legacy.path.as_posix(), "steps": list(legacy.steps)},
+                message=legacy_user_root_message(legacy),
+                payload={"path": legacy.as_posix()},
             )
         )
     if mars.error is not None:

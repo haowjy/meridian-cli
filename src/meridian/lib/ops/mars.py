@@ -334,8 +334,7 @@ class MarsRootReport:
 
 
 def mars_root_report(project_root: Path | None) -> MarsRootReport:
-    legacy = legacy_user_root()
-    fallback = legacy.path if legacy is not None and legacy.active else None
+    fallback = legacy_user_root()
     try:
         inventory = mars_agent_inventory(project_root)
     except ValueError as exc:
