@@ -79,12 +79,9 @@ def _hooks_from_payload(
         row_source = f"{source}.hooks[{index}]"
         try:
             spec = normalize_hook_row(raw_row, source=row_source)
-            loaded = hooks_from_spec(
-                spec,
-                source=source,
-                row_source=row_source,
-            )
-            hooks.extend(loaded)
+            if spec is None:
+                continue
+            hooks.extend(hooks_from_spec(spec, source=source, row_source=row_source))
         except ValueError as exc:
             errors.append(_named_row_error(raw_row, exc))
     return tuple(hooks), tuple(errors)
