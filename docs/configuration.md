@@ -66,6 +66,11 @@ machine-managed ID is stable across moves and is shared by clones and worktrees
 when `meridian.toml` is committed. A `mars.toml`-only project is committed but
 unminted; its next Meridian write adds the ID to `meridian.toml`.
 
+An ID you set by hand is one or more components joined by `/` (`team/proj`), each
+printable, none of them empty or starting with `.`, at most 255 characters in all, and
+not starting with `adhoc.`. Every command in a project whose ID is outside that form fails
+with an error naming `meridian.toml` and the value.
+
 A directory with neither marker uses **ad-hoc identity**, derived from its
 canonical path. Reads create nothing. The first runtime write materializes state
 under `~/.meridian/projects/adhoc.<slug>.<hash>/` and default context under the
@@ -353,7 +358,7 @@ enabled = false
 
 **Extension channels.** Any `[[hooks]] command = "..."` row on a notification
 event receives the notification, so a Slack or desktop channel is one row and
-one script. Stdin carries the hook payload (`schema_version` 3) with a
+one script. Stdin carries the hook payload (`schema_version` 4) with a
 `notification` object: `title`, `body`, `priority`, `email`, and `label`
 (`tmux_session`, `project`, `work_id`, `agent`, `harness`, `child_spawn_id`, `child_agent`, `child_harness`, `sender`, `headline`), and
 `attachments` (absolute paths from `meridian notify --attach`). The
@@ -594,6 +599,28 @@ Meridian runs without a predefined profile. Pass `-a ""` to explicitly clear
 
 Project-level routing defaults (`default_model`, `default_harness`) live in
 `mars.toml` under `[settings]`, not in Meridian config.
+
+## Messages to people
+
+`meridian message @alice "..."` hands the message to a program you name. Meridian knows
+nothing of Slack or any other chat; it runs the program with the address as its last
+argument and the text on stdin, and reads one line of JSON back.
+
+```toml
+# ~/.meridian/config.toml
+[message]
+people = ["meridian-comms", "deliver"]
+```
+
+`people` is the first words of a command line, run with no shell, looked up on `PATH`
+unless the first word is an absolute path. The program gets the environment `meridian`
+was started with and is stopped after 120 s.
+
+**`[message]` is read from `~/.meridian/config.toml` only.** In `meridian.toml`,
+`meridian.local.toml`, a file named by `--config` or by `MERIDIAN_CONFIG` it is ignored
+with a warning. `meridian message` runs outside the harness sandbox, and those files are
+repository content that a sandboxed session can write. The program's answer and the error
+kinds are in [commands.md](commands.md#spawning--monitoring).
 
 ## History ZIP retention
 

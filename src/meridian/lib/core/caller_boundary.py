@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
 from collections.abc import Iterable
@@ -28,6 +29,22 @@ SANDBOXED_SPAWN_LAUNCH_ERROR = (
     "Run `meridian spawn` as a standalone shell command: no `cd ... &&`, pipes, `$()`, "
     "or `VAR=1` prefix."
 )
+SANDBOX_BLOCKED_SENTENCE = (
+    "this command ran inside the session's sandbox, which blocks the connection. Only a "
+    "command of its own (no `cd … &&`, no pipe, no `VAR=1` in front) leaves the sandbox: one "
+    "that begins `meridian message` or `meridian inbox` in a primary session or one whose "
+    "profile may spawn, and one that begins `meridian spawn` only in a session whose profile "
+    "may spawn; `meridian session …` and `meridian machine …` stay inside it. A session "
+    "started before Meridian 0.28 has no grant for `meridian message` or `meridian inbox`: "
+    "restart it, or, if its profile may spawn, use "
+    '`meridian spawn message <address> --message "…"`, which works through 0.28.x.'
+)
+"""What a failed connection is told when ``inside_launcher_sandbox()`` is true (the whole
+error, kind ``sandboxed``) or ``None`` (appended to the error it had)."""
+
+# A sandbox refuses a write with EROFS where it binds the filesystem read-only (Linux) and
+# with EACCES or EPERM elsewhere.
+SANDBOX_DENIAL_ERRNOS = frozenset({errno.EACCES, errno.EPERM, errno.EROFS})
 
 _PID_NAMESPACE_PATH = "/proc/self/ns/pid"
 
@@ -121,6 +138,30 @@ class CallerBoundary:
         )
 
 
+def inside_launcher_sandbox() -> bool | None:
+    """Whether this process runs inside the sandbox its launching session recorded.
+
+    ``True`` when the launcher recorded a constrained sandbox and this process is in
+    another PID namespace (the test ``meridian spawn`` makes); ``None`` when a
+    constrained sandbox was recorded and the namespaces can't be compared (macOS);
+    ``False`` otherwise.
+    """
+
+    raw = os.environ.get(CALLER_BOUNDARY_ENV)
+    if raw is None:
+        return False
+    try:
+        boundary = CallerBoundary.from_env_value(raw)
+    except ValueError:
+        return False
+    if not boundary.is_floored:
+        return False
+    namespace = current_pid_namespace()
+    if boundary.pid_namespace is None or namespace is None:
+        return None
+    return namespace != boundary.pid_namespace
+
+
 @dataclass(frozen=True)
 class CallerBoundaryCheck:
     """One caller-boundary check split around child policy resolution."""
@@ -198,7 +239,9 @@ class CallerBoundaryCheck:
 __all__ = [
     "CALLER_BOUNDARY_ENV",
     "SANDBOXED_SPAWN_LAUNCH_ERROR",
+    "SANDBOX_BLOCKED_SENTENCE",
     "CallerBoundary",
     "CallerBoundaryCheck",
     "current_pid_namespace",
+    "inside_launcher_sandbox",
 ]

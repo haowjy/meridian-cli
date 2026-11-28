@@ -38,13 +38,26 @@ a protocol with the Claude runtime mod in
 `src/meridian/claude_runtime/meridian-spawn-watch/hooks/register.ts`; change
 its parser and these output shapes together.
 
-`spawn message` frames the message as text with the sender and, when available,
-a reply command: recipients otherwise cannot tell who sent it or how to reply.
-The reply uses the sender's current chat so it survives `/clear`; its control
+`meridian message` (and its deprecated alias `spawn message`) frames the message as
+text with the sender and, when available, a reply command: recipients otherwise
+cannot tell who sent it or how to reply. The reply begins `meridian message`, with
+`-C` after the address only for a sender whose ID is not machine-wide: a harness
+lets a command out of its sandbox by its first words. The reply uses the sender's
+current chat so it survives `/clear`; its control
 socket must exist for a reply route to be offered. A Claude primary binds that
 socket only after Claude publishes its inbox; bare or pre-2.1.224 primaries have
 no reply route. A socket file can remain after its server dies, so its existence
 is not a connection check.
+
+`send_message` returns a result and prints nothing; one printer prints it as text
+or `--json`. Kinds are assigned by phase: before the first byte reaches the socket
+a failure has the kind of its cause, and after it any outcome without a parsed
+answer is `maybe_delivered`, so a script that resends on a plain failure never
+resends a message that arrived. Startup errors print the same object under
+`--json` through the descriptor's `startup_error` shape. An `@` address goes to
+the program in `[message] people` of the user's `config.toml`, read from no other
+file: the command runs outside the sandbox, and a repository file is content a
+sandboxed session can write.
 
 The frame must remain message text so every harness receives it. Claude's
 peer-message envelope carries `from` and `from-mode`, which Meridian does not

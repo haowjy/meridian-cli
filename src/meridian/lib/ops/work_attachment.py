@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -9,6 +8,7 @@ from uuid import uuid4
 
 import structlog
 
+from meridian.lib.core.caller import caller_in
 from meridian.lib.core.lifecycle import get_hook_dispatcher
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.launch.session_links import Execution, execution_of, publish_chat_links
@@ -126,9 +126,7 @@ def attach_session(
     normalized = chat_id.strip()
     if not normalized:
         return False
-    execution = execution_of(
-        runtime_root, chat_id=normalized, spawn_id=os.environ.get("MERIDIAN_SPAWN_ID")
-    )
+    execution = execution_of(runtime_root, chat_id=normalized, spawn_id=caller_in(runtime_root))
     attached = attach_executions(project_root, runtime_root, (execution,), work_id)
     return normalized in attached
 

@@ -14,7 +14,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Literal, cast
 
-from meridian.lib.core.delivery import MessageRoute, MessageSender
+from meridian.lib.core.delivery import DeliveryRefused, MessageRoute, MessageSender, TransportDead
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.atomic import atomic_replace
@@ -183,20 +183,23 @@ class ControlSocketServer:
         try:
             raw = await asyncio.wait_for(reader.readline(), _REQUEST_READ_TIMEOUT_SECONDS)
         except TimeoutError:
-            response = {"ok": False, "error": "no request received"}
+            response = _refusal("no request received")
         except ValueError:
-            response = {
-                "ok": False,
-                "error": f"message is over the {MAX_REQUEST_BYTES // (1024 * 1024)} MiB limit",
-            }
+            response = _refusal(
+                f"message is over the {MAX_REQUEST_BYTES // (1024 * 1024)} MiB limit"
+            )
         else:
             try:
                 if raw:
                     response = await self._handle_request(raw)
                 else:
-                    response = {"ok": False, "error": "empty request"}
+                    response = _refusal("empty request")
+            except TransportDead as exc:
+                response = {"ok": False, "kind": "not_running", "error": str(exc)}
+            except DeliveryRefused as exc:
+                response = _refusal(str(exc))
             except Exception as exc:
-                response = {"ok": False, "error": str(exc)}
+                response = {"ok": False, "kind": "maybe_delivered", "error": str(exc)}
 
         encoded = (
             json.dumps(response, separators=(",", ":"), sort_keys=True).encode("utf-8") + b"\n"
@@ -216,24 +219,24 @@ class ControlSocketServer:
         try:
             payload_value: object = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
-            return {"ok": False, "error": "invalid JSON request"}
+            return _refusal("invalid JSON request")
 
         if not isinstance(payload_value, dict):
-            return {"ok": False, "error": "request must be a JSON object"}
+            return _refusal("request must be a JSON object")
         payload = cast("dict[str, object]", payload_value)
 
         message_type = payload.get("type")
         if not isinstance(message_type, str):
-            return {"ok": False, "error": "missing request type"}
+            return _refusal("missing request type")
 
         if message_type != "user_message":
-            return {"ok": False, "error": f"unsupported request type: {message_type}"}
+            return _refusal(f"unsupported request type: {message_type}")
         text = payload.get("text")
         if not isinstance(text, str):
-            return {"ok": False, "error": "user_message requires text"}
+            return _refusal("user_message requires text")
         sender = _parse_sender(payload.get("sender"))
         if sender is False:
-            return {"ok": False, "error": "user_message sender needs spawn_id and project_root"}
+            return _refusal("user_message sender needs spawn_id and project_root")
         delivery = await self._route.deliver(text, sender)
         response: dict[str, object] = {"ok": True, "delivery": delivery.value}
         if self._route.note is not None:
@@ -256,6 +259,12 @@ class ControlSocketServer:
                 await asyncio.wait_for(server.wait_closed(), _STOP_WAIT_SECONDS)
 
 
+def _refusal(error: str) -> dict[str, object]:
+    """A failure of a request the server rejected before delivering anything."""
+
+    return {"ok": False, "kind": "refused", "error": error}
+
+
 def _parse_sender(value: object) -> MessageSender | None | Literal[False]:
     """The request's sender, ``None`` when absent, ``False`` when malformed."""
 
@@ -264,8 +273,15 @@ def _parse_sender(value: object) -> MessageSender | None | Literal[False]:
     if isinstance(value, dict):
         fields = cast("dict[str, object]", value)
         spawn_id, project_root = fields.get("spawn_id"), fields.get("project_root")
+        machine_id, reply_id = fields.get("machine_id"), fields.get("reply_id")
         if isinstance(spawn_id, str) and isinstance(project_root, str):
-            return MessageSender(spawn_id, project_root)
+            return MessageSender(
+                spawn_id,
+                project_root,
+                machine_id if isinstance(machine_id, str) else None,
+                reply_id if isinstance(reply_id, str) else None,
+                fields.get("claimed") is True,
+            )
     return False
 
 

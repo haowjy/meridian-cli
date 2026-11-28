@@ -22,6 +22,7 @@ from meridian.cli.output import emit as emit_output
 from meridian.lib.core.logging import warning_cache_scope
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.util import FormatContext
+from meridian.lib.state.saved_machines import SavedMachine
 
 
 class Caller(BaseModel):
@@ -59,6 +60,13 @@ class GlobalOptions(BaseModel):
     caller: Caller | None = None
     # Startup's decision that a primary launch prints a command (``launch_prints``).
     prints_launch: bool = False
+    # The command as typed without global options, and without ``--``'s passthrough: what a
+    # command that crosses to another machine sends.
+    argv: tuple[str, ...] = ()
+    # ``--machine`` naming another machine: the command runs there, and ``-C`` is not applied
+    # here. ``remote_directory`` is the ``-C`` text as typed, a path on that machine.
+    machine: SavedMachine | None = None
+    remote_directory: str | None = None
 
 
 class Emitter(Protocol):
@@ -136,11 +144,14 @@ def emit(payload: object, *, format_ctx: FormatContext | None = None) -> None:
         flush_sink(sink)
 
 
-def emit_error(message: str, *, exit_code: int = 1, name: str | None = None) -> Never:
-    """Write a command error through the current sink and exit."""
+def emit_error(
+    message: str, *, exit_code: int = 1, name: str | None = None, kind: str | None = None
+) -> Never:
+    """Write a command error through the current sink and exit. *kind* is the error's kind
+    for a caller that branches on it (``not_found``); JSON output only."""
 
     sink, flush_after = _resolve_sink(get_global_options())
-    sink.error(message, exit_code=exit_code, name=name)
+    sink.error(message, exit_code=exit_code, name=name, kind=kind)
     if flush_after:
         flush_sink(sink)
     raise SystemExit(exit_code)

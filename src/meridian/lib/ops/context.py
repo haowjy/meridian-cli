@@ -19,6 +19,7 @@ from meridian.lib.context.resolver import (
     resolve_context_paths,
 )
 from meridian.lib.core.context import RuntimeContext
+from meridian.lib.core.refs import RefNotFound
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.util import FormatContext
 from meridian.lib.launch.cwd import inheritable_task_dir, resolve_effective_task_dir
@@ -411,7 +412,7 @@ def task_dir_set_sync(input: TaskDirSetInput) -> TaskDirMutationOutput:
     spawn_id = _require_session_spawn_id(runtime_ctx)
     task_dir = _validated_task_dir_path(input.path)
     if not write_spawn_scope_task_dir(authority.project_root, spawn_id, task_dir):
-        raise ValueError(f"Spawn '{spawn_id}' not found")
+        raise RefNotFound(spawn_id, "spawn")
     _refresh_session_task_links(authority, runtime_ctx)
     return TaskDirMutationOutput()
 
@@ -423,7 +424,7 @@ def task_dir_clear_sync(input: TaskDirClearInput) -> TaskDirMutationOutput:
     runtime_ctx = RuntimeContext.from_environment()
     spawn_id = _require_session_spawn_id(runtime_ctx)
     if not write_spawn_scope_task_dir(authority.project_root, spawn_id, None):
-        raise ValueError(f"Spawn '{spawn_id}' not found")
+        raise RefNotFound(spawn_id, "spawn")
     _refresh_session_task_links(authority, runtime_ctx)
     return TaskDirMutationOutput()
 

@@ -685,6 +685,61 @@ def stale_context_env_allowlist(sources: Sources) -> list[Violation]:
     ]
 
 
+# The caller's spawn ID means something only together with its runtime root, so the
+# process environment is read for it in one place that returns the pair.
+_CALLER_ENV_OWNER = "meridian/lib/core/caller.py"
+_CALLER_ENV_NAME = "MERIDIAN_SPAWN_ID"
+
+
+def _caller_env_read_line(node: ast.AST) -> int | None:
+    """The line of ``os.environ.get("MERIDIAN_SPAWN_ID")``, ``os.environ[...]`` or
+    ``os.getenv(...)``, when ``node`` is one."""
+
+    if isinstance(node, ast.Call) and node.args:
+        first, function = node.args[0], node.func
+        reads = isinstance(function, ast.Attribute) and (
+            function.attr == "getenv"
+            or (function.attr in {"get", "pop"} and _is_os_environ(function.value))
+        )
+        if reads and isinstance(first, ast.Constant) and first.value == _CALLER_ENV_NAME:
+            return node.lineno
+    if (
+        isinstance(node, ast.Subscript)
+        and _is_os_environ(node.value)
+        and isinstance(node.slice, ast.Constant)
+        and node.slice.value == _CALLER_ENV_NAME
+    ):
+        return node.lineno
+    return None
+
+
+def _is_os_environ(node: ast.expr) -> bool:
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "environ"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "os"
+    )
+
+
+def caller_env_read_violations(sources: Sources) -> list[Violation]:
+    """Reject reading the caller's spawn ID from ``os.environ`` outside ``lib/core/caller.py``."""
+
+    return [
+        Violation(
+            module.path,
+            line,
+            "the caller's spawn ID is read through meridian.lib.core.caller "
+            "(caller_identity, caller_in, caller_spawn_id): an ID without its runtime root "
+            "names a different session in another project.",
+        )
+        for module in sources.python_modules
+        if module.path != _CALLER_ENV_OWNER and module.mentions("environ", "getenv")
+        for line in (_caller_env_read_line(node) for node in ast.walk(module.tree))
+        if line is not None
+    ]
+
+
 def version_location_violations(sources: Sources) -> list[Violation]:
     """Reject a release version that differs between the places `versions.LOCATIONS` lists."""
 
@@ -708,6 +763,7 @@ CHECKS: tuple[Check, ...] = (
     chat_lock_path_violations,
     context_env_read_violations,
     stale_context_env_allowlist,
+    caller_env_read_violations,
     version_location_violations,
 )
 

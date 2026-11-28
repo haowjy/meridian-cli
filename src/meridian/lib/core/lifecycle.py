@@ -660,22 +660,29 @@ def _terminal_telemetry_payload(spawn: SpawnRecord) -> dict[str, Any]:
     return payload
 
 
-def _hooks_dispatch_enabled(env: Mapping[str, str] | None = None) -> bool:
+def _hook_env(project_root: Path, runtime_root: Path) -> Mapping[str, str] | None:
+    """The environment hooks run in: the process's, unless this dispatch is into another
+    project, where it is what ``-C`` into that project would leave (the caller's spawn,
+    chat and work names don't mean anything there)."""
 
-    scope = os.environ if env is None else env
-    value = scope.get("MERIDIAN_HOOKS_ENABLED")
-    if value is None:
-        return True
-    return value.strip().lower() != "false"
+    from meridian.env_registry import env_toward_project
+    from meridian.lib.core.caller import caller_runtime_root, same_runtime_root
+
+    caller_root = caller_runtime_root()
+    if caller_root is None or same_runtime_root(caller_root, runtime_root):
+        return None
+    return env_toward_project(os.environ, project_root)
 
 
 def get_hook_dispatcher(project_root: Path, runtime_root: Path) -> HookDispatcher | None:
 
-    if not _hooks_dispatch_enabled():
+    # Imported lazily to avoid lifecycle <-> hooks circular import at module import time.
+    from meridian.lib.hooks.types import hooks_dispatch_enabled
+
+    if not hooks_dispatch_enabled():
         return None
 
     try:
-        # Imported lazily to avoid lifecycle <-> hooks circular import at module import time.
         from meridian.lib.hooks.config import load_hooks_config_report
         from meridian.lib.hooks.dispatch import HookDispatcher
         from meridian.lib.hooks.registry import HookRegistry
@@ -689,7 +696,8 @@ def get_hook_dispatcher(project_root: Path, runtime_root: Path) -> HookDispatche
         return HookDispatcher(
             project_root,
             runtime_root,
-            registry=HookRegistry(project_root, hooks_config=loaded_hooks.config),
+            registry=HookRegistry(loaded_hooks.config),
+            env=_hook_env(project_root, runtime_root),
         )
     except ValueError as exc:
         logger.warning(

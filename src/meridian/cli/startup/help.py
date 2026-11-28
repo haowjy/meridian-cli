@@ -35,6 +35,12 @@ OPTIONS: tuple[Option, ...] = (
     Option("--format TEXT", "Set output format: text or json.", False),
     Option("--json", "Emit command output as JSON.", False),
     Option("-C, --directory PATH", "Resolve project root from this path instead of CWD.", True),
+    Option(
+        "--machine NAME",
+        "Run a reading or messaging command on a saved machine (`meridian machine -h`); "
+        "goes after the command words.",
+        True,
+    ),
     Option("--config TEXT", "Path to a user config TOML overlay.", False),
     Option("-h, --help", "Show this message and exit.", False),
     Option("-v, --version", "Show the application version.", False),

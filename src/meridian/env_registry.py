@@ -7,8 +7,10 @@ Pi runtime so their ownership and propagation rules stay explicit.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 
 
 class EnvTier(StrEnum):
@@ -275,6 +277,12 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _hook_payload("MERIDIAN_HOOK_EVENT_ID", "Hook event identifier.", "event_id"),
     _hook_payload("MERIDIAN_HOOK_SCHEMA_VERSION", "Hook payload schema version.", "schema_version"),
     _hook_payload("MERIDIAN_HOOK_TIMESTAMP", "Hook event timestamp.", "timestamp"),
+    _hook_payload(
+        "MERIDIAN_INBOX_MESSAGE_ID", "Hook inbox message identifier.", "inbox_message_id"
+    ),
+    _hook_payload(
+        "MERIDIAN_INBOX_MESSAGE_PATH", "Hook inbox message file path.", "inbox_message_path"
+    ),
     _hook_payload("MERIDIAN_NOTIFICATION_BODY", "Hook notification body.", "notification_body"),
     _hook_payload(
         "MERIDIAN_NOTIFICATION_PRIORITY", "Hook notification priority.", "notification_priority"
@@ -307,6 +315,12 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _internal_handle("_MERIDIAN_GATE_FD", "Launch gate read descriptor.", child=False),
     _internal_handle("_MERIDIAN_GATE_SCOPE", "Launch guardian signal scope.", child=False),
     _internal_handle("_MERIDIAN_GATE_GRACE", "Launch guardian TERM grace period.", child=False),
+    _internal_handle(
+        "_MERIDIAN_MACHINE_CALL",
+        "JSON `caller` block of a request from another machine; set only on the command "
+        "`meridian machine run` starts, which then has no current project.",
+        child=False,
+    ),
     _internal_handle("_MERIDIAN_DEPTH", "Current delegated spawn depth."),
     _internal_handle("_MERIDIAN_PARENT_SPAWN_ID", "Parent spawn identifier.", project_scoped=True),
     _internal_handle(
@@ -433,6 +447,47 @@ def is_project_scoped_env_name(name: str) -> bool:
     return any(family.project_scoped and family.contains(name) for family in ENV_FAMILIES)
 
 
+def project_scoped_env_names(environ: Mapping[str, str]) -> list[str]:
+    """The names in *environ* that mean nothing in another project."""
+
+    return [name for name in environ if is_project_scoped_env_name(name)]
+
+
+def env_toward_project(environ: Mapping[str, str], project_root: Path) -> dict[str, str]:
+    """*environ* as a command with ``-C <project_root>`` into another project would see it.
+
+    ``-C`` into another project and a dispatch into another project (hooks) share this one
+    definition of what stays behind.
+    """
+
+    scoped = set(project_scoped_env_names(environ))
+    toward = {name: value for name, value in environ.items() if name not in scoped}
+    toward["MERIDIAN_PROJECT_DIR"] = project_root.as_posix()
+    return toward
+
+
+_SESSION_SUBTYPES = frozenset((EnvSubtype.INJECTED_HANDLE, EnvSubtype.HOOK_PAYLOAD))
+_SESSION_ENV_NAMES = frozenset(item.name for item in ENV_VARS if item.subtype in _SESSION_SUBTYPES)
+
+
+def session_free_env(environ: Mapping[str, str]) -> dict[str, str]:
+    """*environ* for a process that acts for no session.
+
+    Drops what a launch injects into its session and what a hook dispatch hands a row;
+    config inputs (``MERIDIAN_HOME``, ``MERIDIAN_CONFIG``, ``MERIDIAN_HOOKS_ENABLED``...)
+    stay, so the process reads the state and config its starter did.
+    """
+
+    return {
+        name: value
+        for name, value in environ.items()
+        if name not in _SESSION_ENV_NAMES
+        and not any(
+            family.subtype in _SESSION_SUBTYPES and family.contains(name) for family in ENV_FAMILIES
+        )
+    }
+
+
 def is_allowed_child_env_name(name: str) -> bool:
     """Return whether the registry permits bind-time child injection of *name*."""
 
@@ -451,7 +506,10 @@ __all__ = [
     "EnvSubtype",
     "EnvTier",
     "EnvVar",
+    "env_toward_project",
     "is_allowed_child_env_name",
     "is_project_scoped_env_name",
     "is_registered_env_name",
+    "project_scoped_env_names",
+    "session_free_env",
 ]

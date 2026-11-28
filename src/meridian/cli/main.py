@@ -29,6 +29,12 @@ from meridian.cli.app_tree import (
 )
 from meridian.cli.argv_normalization import canonicalize_argv
 from meridian.cli.bootstrap import (
+    ParsedGlobalOptions,
+    maybe_bootstrap_runtime_state,
+    meridian_managed_env_default,
+    temporary_config_env,
+)
+from meridian.cli.bootstrap import (
     extract_global_options as _bootstrap_extract_global_options,
 )
 from meridian.cli.bootstrap import (
@@ -36,11 +42,6 @@ from meridian.cli.bootstrap import (
 )
 from meridian.cli.bootstrap import (
     is_root_help_request as _bootstrap_is_root_help_request,
-)
-from meridian.cli.bootstrap import (
-    maybe_bootstrap_runtime_state,
-    meridian_managed_env_default,
-    temporary_config_env,
 )
 from meridian.cli.bootstrap import (
     split_passthrough_args as _bootstrap_split_passthrough_args,
@@ -72,19 +73,28 @@ from meridian.cli.output import (
     flush_sink,
     normalize_output_format,
 )
-from meridian.cli.startup.catalog import COMMAND_CATALOG
+from meridian.cli.startup.catalog import COMMAND_CATALOG, CommandDescriptor
 from meridian.cli.startup.classify import classify_invocation
 from meridian.cli.startup.help import render_root_help
-from meridian.cli.startup.policy import BootstrapPlan, StartupClass, StateRequirement
+from meridian.cli.startup.policy import (
+    BootstrapPlan,
+    StartupClass,
+    StartupErrorShape,
+    StateRequirement,
+)
 from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
 from meridian.cli.utils import parse_csv_list
-from meridian.env_registry import is_project_scoped_env_name
+from meridian.env_registry import project_scoped_env_names
+from meridian.lib.core.caller import caller_spawn_id
 from meridian.lib.core.depth import is_managed_meridian_session, is_root_side_effect_process
 from meridian.lib.core.logging import warning_cache_scope
+from meridian.lib.core.refs import RefNotFound, project_named_scope
 from meridian.lib.core.types import harness_choices_text
 from meridian.lib.harness.printed import PrintedLaunch, eval_hint
 from meridian.lib.launch.errors import WorkTaskDirMissing
+from meridian.lib.machines.resolve import MachineError, resolve_machine
 from meridian.lib.state.project_identity import is_same_project, resolve_project_identity
+from meridian.lib.state.saved_machines import SavedMachine
 from meridian.lib.telemetry import emit_telemetry
 
 if TYPE_CHECKING:
@@ -93,6 +103,31 @@ if TYPE_CHECKING:
 
 _registered_command_groups: set[str] = set()
 _group_commands_registered = False
+
+
+def _remote_machine(cleaned: Sequence[str], parsed: ParsedGlobalOptions) -> SavedMachine | None:
+    """The saved machine ``--machine`` names, or ``None`` for this machine (the option is then
+    dropped and the command runs here, ``-C`` and all).
+
+    Raises ``MachineError`` for an unknown machine and for a command or a global option that
+    doesn't cross, before anything connects.
+    """
+
+    if parsed.machine is None:
+        return None
+    target = resolve_machine(parsed.machine)
+    if not isinstance(target, SavedMachine):
+        return None
+    descriptor = classify_invocation(cleaned, COMMAND_CATALOG)
+    if descriptor is None or not descriptor.crosses:
+        command = " ".join(descriptor.command_path) if descriptor is not None else "this command"
+        raise MachineError("refused", f"`{command or 'meridian'}` doesn't reach another machine")
+    refused = parsed.options_that_dont_cross()
+    if refused:
+        raise MachineError(
+            "refused", f"{', '.join(refused)} doesn't reach another machine: drop it"
+        )
+    return target
 
 
 def _extract_global_options(argv: Sequence[str]) -> tuple[list[str], GlobalOptions]:
@@ -107,8 +142,9 @@ def _extract_global_options(argv: Sequence[str]) -> tuple[list[str], GlobalOptio
     if parsed.output_explicit:
         explicit_format = cast("OutputFormat", parsed.output_format)
 
+    machine = _remote_machine(cleaned, parsed)
     project_root: Path | None = None
-    if parsed.directory is not None:
+    if parsed.directory is not None and machine is None:
         project_root = Path(parsed.directory).expanduser().resolve()
 
     render_mode = resolve_render_mode(
@@ -126,7 +162,9 @@ def _extract_global_options(argv: Sequence[str]) -> tuple[list[str], GlobalOptio
         render_mode=render_mode,
         explicit_format=explicit_format,
         project_root=project_root,
-        directory_explicit=parsed.directory_explicit,
+        directory_explicit=parsed.directory_explicit and machine is None,
+        machine=machine,
+        remote_directory=parsed.directory if machine is not None else None,
     )
 
 
@@ -226,6 +264,17 @@ def root(
         Parameter(
             name=["-C", "--directory"],
             help="Resolve project root from this path instead of CWD.",
+        ),
+    ] = None,
+    machine: Annotated[
+        str | None,
+        Parameter(
+            name="--machine",
+            help=(
+                "Run a reading or messaging command on a saved machine (`meridian machine "
+                "list`). Put it after the command words. With --machine, -C names a path "
+                "on that machine."
+            ),
         ),
     ] = None,
     yes: Annotated[
@@ -768,6 +817,21 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
 
             _ = _notify_cmd
 
+        def _register_message() -> None:
+            import meridian.cli.message as _message_cmd
+
+            _ = _message_cmd
+
+        def _register_inbox() -> None:
+            import meridian.cli.inbox_cmd as _inbox_cmd
+
+            _ = _inbox_cmd
+
+        def _register_machine() -> None:
+            import meridian.cli.machine_cmd as _machine_cmd
+
+            _ = _machine_cmd
+
         def _register_idle() -> None:
             import meridian.cli.idle_cmd as _idle_cmd
 
@@ -803,6 +867,9 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
             "mermaid": _register_mermaid,
             "artifact": _register_artifact,
             "notify": _register_notify,
+            "message": _register_message,
+            "inbox": _register_inbox,
+            "machine": _register_machine,
             "idle": _register_idle,
             "qi": _register_qi,
             "report": _register_report,
@@ -850,6 +917,28 @@ def _emit_idle_error(message: str) -> None:
     import json
 
     print(json.dumps({"error": message}, separators=(",", ":")))
+
+
+def _prints_startup_error(shape: StartupErrorShape, *, json_mode: bool) -> bool:
+    """Whether an error raised before the handler is printed as an object on stdout."""
+
+    return shape is StartupErrorShape.IDLE or (shape is StartupErrorShape.MESSAGE and json_mode)
+
+
+def _emit_startup_error(
+    shape: StartupErrorShape, message: str, *, json_mode: bool, kind: str = "usage"
+) -> bool:
+    """Print *message* in the command's own error shape; False leaves it to the caller."""
+
+    if not _prints_startup_error(shape, json_mode=json_mode):
+        return False
+    if shape is StartupErrorShape.IDLE:
+        _emit_idle_error(message)
+    else:
+        from meridian.lib.message.result import print_startup_error
+
+        print_startup_error(message, kind)
+    return True
 
 
 def _top_level_command_names() -> set[str]:
@@ -902,15 +991,22 @@ def _is_launch_continue(argv: Sequence[str], *, command_path: tuple[str, ...] | 
     return False
 
 
-def _continue_ref(argv: Sequence[str]) -> str | None:
-    for index, token in enumerate(argv):
-        if token == "--":
-            break
-        if token == "--continue":
-            return argv[index + 1] if index + 1 < len(argv) else None
-        if token.startswith("--continue="):
-            return token.partition("=")[2]
-    return None
+def _reenter_project_for_continue(
+    args: Sequence[str], descriptor: CommandDescriptor | None, options: GlobalOptions
+) -> None:
+    from meridian.cli.continue_reentry import reenter_project_for_continue
+    from meridian.cli.utils import resolve_cli_project_root
+
+    try:
+        reenter_project_for_continue(
+            args,
+            command_path=descriptor.command_path if descriptor is not None else None,
+            project_root=resolve_cli_project_root(),
+            directory_explicit=options.directory_explicit,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
 
 
 def _launch_prints(
@@ -924,7 +1020,9 @@ def _launch_prints(
 
     if command_path not in {None, ()}:
         return False
-    continue_ref = _continue_ref(argv) if harness is None else None
+    from meridian.cli.continue_reentry import continue_ref as find_continue_ref
+
+    continue_ref = find_continue_ref(argv) if harness is None else None
     if harness is None and continue_ref is None:
         return False
     from meridian.cli.utils import resolve_cli_project_root
@@ -1035,7 +1133,7 @@ def _install_cli_telemetry(
         install(
             TelemetryPlan(
                 mode=mode,
-                logical_owner=os.environ.get("MERIDIAN_SPAWN_ID") or "cli",
+                logical_owner=caller_spawn_id() or "cli",
                 runtime_root=runtime_root,
                 schedule_maintenance=schedule_maintenance,
             )
@@ -1132,12 +1230,12 @@ def _directory_env_scope(
     other_project = (
         directory_explicit and project_root is not None and not _inherited_project_is(project_root)
     )
-    dropped = [key for key in os.environ if other_project and is_project_scoped_env_name(key)]
-    caller_spawn = os.environ.get("MERIDIAN_SPAWN_ID", "").strip()
+    dropped = project_scoped_env_names(os.environ) if other_project else []
+    caller_spawn = caller_spawn_id()
     caller_root = os.environ.get("MERIDIAN_PROJECT_DIR", "").strip()
     caller = (
         Caller(
-            spawn_id=caller_spawn,
+            spawn_id=str(caller_spawn),
             project_root=Path(caller_root) if other_project else None,
         )
         if caller_spawn
@@ -1186,17 +1284,34 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
     verbose_count = args.count("--verbose")
     configure_logging(json_mode=json_mode, verbosity=verbose_count)
 
-    idle_invocation = _bootstrap_first_positional_token(args) == "idle"
+    early_descriptor = classify_invocation(args, COMMAND_CATALOG)
     try:
         cleaned_args, options = _extract_global_options(args)
-    except SystemExit as exc:
-        if idle_invocation and isinstance(exc.code, str):
-            _emit_idle_error(exc.code)
+    except (SystemExit, MachineError) as exc:
+        text, kind = (exc.text, exc.kind) if isinstance(exc, MachineError) else (exc.code, "usage")
+        if (
+            early_descriptor is not None
+            and isinstance(text, str)
+            and _emit_startup_error(
+                early_descriptor.startup_error, text, json_mode=json_mode, kind=kind
+            )
+        ):
+            raise SystemExit(1) from None
+        if isinstance(exc, MachineError):
+            if json_mode:
+                # A failure to name the machine is a failure of the call: the object a crossing
+                # command prints for every failure under --json.
+                from meridian.lib.message.result import print_startup_error
+
+                print_startup_error(exc.text, exc.kind)
+            else:
+                print(f"error: {exc.text}", file=sys.stderr)
             raise SystemExit(1) from None
         raise
     if not (cleaned_args and cleaned_args[0] == "mars"):
         cleaned_args, passthrough_args = _split_passthrough_args(cleaned_args)
         options = options.model_copy(update={"passthrough_args": passthrough_args})
+    options = options.model_copy(update={"argv": tuple(cleaned_args)})
     help_advanced = False
     if _is_help_request(cleaned_args) and "--advanced" in cleaned_args:
         first_token = _first_command_token(cleaned_args)
@@ -1254,7 +1369,8 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
         descriptor.startup_class if descriptor is not None else StartupClass.PRIMARY_LAUNCH
     )
     help_request = _is_help_request(cleaned_args)
-    bootstrap_skipped = help_request
+    # A command that runs on another machine prepares nothing here.
+    bootstrap_skipped = help_request or options.machine is not None
     bootstrap_plan = descriptor.bootstrap_plan if descriptor is not None else None
     launch_dry_run = _is_launch_dry_run(
         cleaned_args,
@@ -1272,11 +1388,13 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
     prints_launch = False
     with (
         invocation_scope(options),
+        project_named_scope(options.directory_explicit),
         manual_hook_authority_scope(
             suppress=should_suppress_manual_hook_authority(argv=cleaned_args)
         ),
     ):
         if not bootstrap_skipped:
+            _reenter_project_for_continue(args, descriptor, options)
             # A printed launch writes nothing, so startup treats it like a dry run.
             prints_launch = _launch_prints(
                 cleaned_args,
@@ -1332,6 +1450,7 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
         )
         with ExitStack() as invocation_stack:
             invocation_stack.enter_context(invocation_scope(options))
+            invocation_stack.enter_context(project_named_scope(options.directory_explicit))
             invocation_stack.callback(flush_sink, active_sink)
             from meridian.cli.agent_help import (
                 leaf_help_rendering_scope,
@@ -1356,13 +1475,19 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
                 temporary_config_env(options.config_file),
             ):
                 try:
-                    if cleaned_args[:1] == ["idle"]:
+                    if descriptor is not None and _prints_startup_error(
+                        descriptor.startup_error, json_mode=json_mode
+                    ):
                         from cyclopts.exceptions import CycloptsError
 
                         try:
                             app(cleaned_args, print_error=False, exit_on_error=False)
                         except CycloptsError as exc:
-                            _emit_idle_error(_operation_error_message(exc))
+                            _emit_startup_error(
+                                descriptor.startup_error,
+                                _operation_error_message(exc),
+                                json_mode=json_mode,
+                            )
                             raise SystemExit(1) from None
                     else:
                         app(cleaned_args)
@@ -1375,5 +1500,7 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
                         _operation_error_message(exc),
                         name="work_task_dir_missing",
                     )
+                except RefNotFound as exc:
+                    _emit_error(_operation_error_message(exc), kind="not_found")
                 except (KeyError, ValueError, FileNotFoundError, OSError, RuntimeError) as exc:
                     _emit_error(_operation_error_message(exc))

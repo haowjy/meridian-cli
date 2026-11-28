@@ -112,6 +112,12 @@ _READ_ONLY_COMMANDS: tuple[PlatformCommand, ...] = (
 )
 
 SPAWN_PLATFORM_COMMAND = _prefix("meridian spawn", runs_outside_sandbox=True)
+# `meridian message` reaches control sockets, ssh and the people program, all out of a
+# sandbox's reach; a harness matches the first words, so it needs a grant of its own.
+MESSAGE_PLATFORM_COMMAND = _prefix("meridian message", runs_outside_sandbox=True)
+# The machine inbox is under `~/.meridian/machine/`, outside every project's runtime root,
+# and `inbox offer` sends as `meridian message` does.
+INBOX_PLATFORM_COMMAND = _prefix("meridian inbox", runs_outside_sandbox=True)
 
 # Preparing a delegated brief is part of spawn capability. ``work path`` may create parent
 # directories beneath the active work directory, so it is intentionally not a general read grant.
@@ -154,16 +160,19 @@ def launch_permission_rules(
     profile_tool_rules: tuple[ToolRule, ...],
     platform_tool_rules: tuple[ToolRule, ...],
     spawn: bool,
+    primary: bool,
     has_spawn_capability: bool,
     native_agent_copy: bool,
     allow_builtin_agents: bool,
 ) -> tuple[tuple[ToolRule, ...], tuple[PlatformRule, ...]]:
     """Select ordinary platform denies and the remaining mechanism rules for a launch.
 
-    Every launch gets Meridian's completion and read commands. A launch whose profile can
-    spawn also gets the spawn command prefix. A harness's own defaults can close the shell to
-    a headless child even without tool rules, so these grants cannot depend on the profile's
-    shell rules. A compile whose shell is already open has nothing to add for them.
+    Every launch gets Meridian's completion and read commands. A primary, or a launch whose
+    profile can spawn, also gets ``meridian message`` and ``meridian inbox``: every primary
+    is told of waiting messages and offers. Only a launch whose profile can spawn gets
+    ``meridian spawn`` and ``meridian work path``. A harness's own defaults can close the
+    shell to a headless child even without tool rules, so these grants cannot depend on the
+    profile's shell rules. A compile whose shell is already open has nothing to add for them.
     """
 
     capabilities = _native_subagent_capabilities(
@@ -185,8 +194,15 @@ def launch_permission_rules(
     commands = (*_COMPLETION_COMMANDS, *_READ_ONLY_COMMANDS)
     if has_spawn_capability:
         commands = (*commands, _SPAWN_WORK_PATH_COMMAND, SPAWN_PLATFORM_COMMAND)
+    if primary or has_spawn_capability:
+        commands = (*commands, MESSAGE_PLATFORM_COMMAND, INBOX_PLATFORM_COMMAND)
     rules.append(PlatformRule(kind="meridian-commands", commands=commands))
     return denies, tuple(rules)
 
 
-__all__ = ["SPAWN_PLATFORM_COMMAND", "launch_permission_rules"]
+__all__ = [
+    "INBOX_PLATFORM_COMMAND",
+    "MESSAGE_PLATFORM_COMMAND",
+    "SPAWN_PLATFORM_COMMAND",
+    "launch_permission_rules",
+]

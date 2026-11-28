@@ -30,6 +30,7 @@ from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_publish_dir
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.launch_lock import LaunchHandle, LaunchSlot
+from meridian.lib.state.machine_ids import allocate, claim_root, numbered_names
 from meridian.lib.state.paths import (
     LaunchPaths,
     RuntimePaths,
@@ -85,29 +86,26 @@ from meridian.plugin_api.types import SpawnKind
 logger = structlog.get_logger(__name__)
 
 
-def _spawn_id_index(spawn_id: SpawnId | str) -> int:
-    value = str(spawn_id)
-    if is_spawn_id(value):
-        return int(value[1:])
-    return 0
-
-
 def _spawn_counter_path(paths: RuntimePaths) -> Path:
     return paths.root_dir / "spawn-id-counter"
 
 
-def read_spawn_counter(runtime_root: Path) -> int:
-    try:
-        return int((runtime_root / "spawn-id-counter").read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
-        return 0
+def _allocate_spawn_id(paths: RuntimePaths) -> SpawnId:
+    """Issue a machine-wide spawn ID; the caller holds ``spawns_flock``.
 
+    Older builds still allocate from this root's counter, and with the file missing they
+    seed from the highest ``spawns/p*``: a number in the claimed range. So the file must
+    exist before the first claim, holding the highest number no claim covers.
+    """
 
-def _seed_spawn_counter_from_dirs(paths: RuntimePaths) -> int:
-    return max(
-        (_spawn_id_index(spawn_id) for spawn_id in _scan_spawn_ids(paths.spawns_dir)),
-        default=0,
-    )
+    counter = _spawn_counter_path(paths)
+    if not counter.exists():
+        legacy = next(
+            (n for n in numbered_names(paths.spawns_dir, "p") if claim_root(f"p{n}") is None),
+            0,
+        )
+        atomic_write_text(counter, f"{legacy}\n", permissions=PRIVATE_FILE_MODE)
+    return SpawnId(allocate("p", paths.root_dir))
 
 
 def reserve_launch(
@@ -115,14 +113,7 @@ def reserve_launch(
 ) -> LaunchPaths:
     paths = RuntimePaths.from_root_dir(runtime_root)
     with lock_file(paths.spawns_flock):
-        current = read_spawn_counter(paths.root_dir)
-        if current == 0 and not _spawn_counter_path(paths).is_file():
-            current = _seed_spawn_counter_from_dirs(paths)
-        next_value = current + 1
-        atomic_write_text(
-            _spawn_counter_path(paths), f"{next_value}\n", permissions=PRIVATE_FILE_MODE
-        )
-        return LaunchPaths.reserved(runtime_root, SpawnId(f"p{next_value}"), FIRST_LAUNCH)
+        return LaunchPaths.reserved(runtime_root, _allocate_spawn_id(paths), FIRST_LAUNCH)
 
 
 def _runner_created_at_epoch_for_pid(runner_pid: int | None) -> float | None:
@@ -392,14 +383,7 @@ def start_spawn(
                 raise ValueError(f"Invalid spawn ID: {explicit_spawn_id}")
             resolved_spawn_id = SpawnId(explicit_spawn_id)
         else:
-            current = read_spawn_counter(paths.root_dir)
-            if current == 0 and not _spawn_counter_path(paths).is_file():
-                current = _seed_spawn_counter_from_dirs(paths)
-            next_value = current + 1
-            atomic_write_text(
-                _spawn_counter_path(paths), f"{next_value}\n", permissions=PRIVATE_FILE_MODE
-            )
-            resolved_spawn_id = SpawnId(f"p{next_value}")
+            resolved_spawn_id = _allocate_spawn_id(paths)
         record = SpawnRecord(
             id=str(resolved_spawn_id),
             history_id=uuid4(),

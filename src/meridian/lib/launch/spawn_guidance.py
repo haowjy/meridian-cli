@@ -17,6 +17,7 @@ from meridian.lib.launch.composition import (
     CompositionBlock,
     GuidancePhase,
 )
+from meridian.lib.state.machine_ids import claim_root
 from meridian.plugin_api.types import SpawnKind
 
 # Capabilities a bundled `*__meridian` skill covers are named only in the
@@ -134,14 +135,18 @@ def _chat_lines(chat_id: str | None, project_root: Path, *, env: bool = True) ->
         return []
     # Only a primary renders this: its chat is the conversation's own, so it survives
     # resume. A spawn's launching chat is per-launch and lives in the `# Meridian spawn`
-    # block. Chat IDs count per project, so the bare ID is ambiguous to a peer in
-    # another repo; the command carries the project it belongs to.
+    # block. A chat ID issued before machine-wide IDs counts per project, so a peer in
+    # another repo needs the project it belongs to; a claimed ID names itself.
+    via = (
+        ""
+        if claim_root(resolved_chat_id) is not None
+        else f" -C {shlex.quote(project_root.as_posix())}"
+    )
     return [
         f"- `{resolved_chat_id}` — this conversation's chat"
         f"{_env_ref('MERIDIAN_CHAT_ID', shown=env)}; use it in names and as a handoff's `--from`.",
         "- To message this session from another session or repo: "
-        f"`meridian -C {shlex.quote(project_root.as_posix())} spawn message "
-        f'{resolved_chat_id} --message "..."`.',
+        f'`meridian message {resolved_chat_id}{via} "..."`.',
     ]
 
 
@@ -374,7 +379,11 @@ def build_guidance_blocks(
     spawn_usage_contract: str,
     harness_guidance: str | None = None,
     waiting_line: str | None = None,
+    inbox_line: str | None = None,
 ) -> tuple[CompositionBlock, ...]:
+    """``waiting_line`` is a harness's sentence telling a child how to wait; ``inbox_line``
+    says messages wait in the machine's inbox, for a primary at a fresh launch."""
+
     blocks: list[CompositionBlock] = []
     blocks.append(
         CompositionBlock(
@@ -395,6 +404,12 @@ def build_guidance_blocks(
             "",
         )
     )
+    if inbox_line is not None:
+        # Its own heading, after the capabilities: as the last line of the spawn rules a
+        # model read it as one of them and reported no waiting messages.
+        blocks.append(
+            CompositionBlock("inbox", GuidancePhase.GUIDANCE, 6, f"# Inbox\n\n{inbox_line}")
+        )
     if spawn_capable:
         blocks.append(
             CompositionBlock("spawn-prompting", GuidancePhase.GUIDANCE, 7, _SPAWN_PROMPTING)

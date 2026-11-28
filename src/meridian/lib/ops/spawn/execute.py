@@ -17,7 +17,7 @@ from meridian.lib.launch.context import PreparedLaunchSurface
 from meridian.lib.launch.continue_launch import ContinueHold
 from meridian.lib.launch.cwd import inheritable_task_dir, resolve_task_cwd
 from meridian.lib.launch.request import LaunchArgvIntent, SpawnRequest
-from meridian.lib.platform import IS_WINDOWS
+from meridian.lib.platform.detach import detached_popen_kwargs
 from meridian.lib.state.launch_lock import HANDOFF_ENV, LaunchSlot
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.spawn.model import (
@@ -70,24 +70,6 @@ def _session_log_available_for_spawn(
         spawn_id,
         harness_session_id=harness_session_id,
     )
-
-
-def _build_detached_popen_kwargs() -> dict[str, Any]:
-    """Build platform-appropriate kwargs for a detached subprocess.Popen.
-
-    On POSIX, uses start_new_session=True to create a new process group.
-    On Windows, uses creationflags to detach the process.
-    """
-    if IS_WINDOWS:
-        create_new_process_group = int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
-        detached_process = int(getattr(subprocess, "DETACHED_PROCESS", 0))
-        return {
-            "creationflags": create_new_process_group | detached_process,
-        }
-    return {
-        "start_new_session": True,
-        "close_fds": True,
-    }
 
 
 def _task_cwd_from_execution(*, control_root: Path, execution_cwd: str) -> str | None:
@@ -399,7 +381,7 @@ def execute_spawn_background(
                         stdout=stdout_handle,
                         stderr=stderr_handle,
                         pass_fds=(handoff_fd,),
-                        **_build_detached_popen_kwargs(),
+                        **detached_popen_kwargs(),
                     )
                 finally:
                     os.close(handoff_fd)

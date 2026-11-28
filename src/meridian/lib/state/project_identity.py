@@ -20,6 +20,7 @@ from meridian.lib.config.preserving_edit import (
     set_project_id,
 )
 from meridian.lib.config.project_root import has_project_marker
+from meridian.lib.core.refs import PROJECT_ID_FORM, is_project_id_form
 from meridian.lib.platform.atomic import atomic_write_text
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.json_doc import write_model_once
@@ -122,6 +123,11 @@ def get_committed_project_id(project_root: Path) -> str | None:
     if not isinstance(raw_id, str) or not raw_id.strip():
         raise ValueError(f"Invalid [project] id in '{config_path.as_posix()}'.")
     project_id = raw_id.strip()
+    if not is_project_id_form(project_id):
+        raise ValueError(
+            f"Invalid [project] id {project_id!r} in '{config_path.as_posix()}': "
+            f"an ID is {PROJECT_ID_FORM}."
+        )
     if project_id.startswith(ADHOC_PROJECT_ID_PREFIX):
         raise ValueError(
             f"Invalid [project] id in '{config_path.as_posix()}': "

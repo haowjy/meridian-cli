@@ -4,41 +4,23 @@ import os
 import subprocess
 import time
 from collections.abc import Mapping
-from pathlib import Path
 
 from meridian.env_registry import HOOK_PAYLOAD_ENV_KEYS
-from meridian.lib.hooks.types import Hook, HookContext, HookResult
+from meridian.lib.hooks.types import Hook, HookContext, HookResult, hooks_dispatch_enabled
 from meridian.lib.launch.cli_shim import pin_launching_build, write_pinned_shim
+from meridian.lib.platform import get_home_path
 from meridian.lib.platform.process_scope.base import process_birth_epoch
 from meridian.lib.platform.process_scope.fallback import terminate_tree_sync
 
 _TAIL_BYTES = 1024
 _TERM_GRACE_SECONDS = 2.0
-_HOOKS_ENABLED_ENV = "MERIDIAN_HOOKS_ENABLED"
 _HOOK_PAYLOAD_ENV_NAMES = frozenset(HOOK_PAYLOAD_ENV_KEYS.values())
-
-
-def hooks_dispatch_enabled(env: Mapping[str, str] | None = None) -> bool:
-
-    scope = os.environ if env is None else env
-    value = scope.get(_HOOKS_ENABLED_ENV)
-    if value is None:
-        return True
-    return value.strip().lower() != "false"
 
 
 def _tail_text(data: bytes | None) -> str | None:
     if not data:
         return None
     return data[-_TAIL_BYTES:].decode("utf-8", errors="replace")
-
-
-def _as_bytes(data: bytes | str | None) -> bytes:
-    if data is None:
-        return b""
-    if isinstance(data, bytes):
-        return data
-    return data.encode("utf-8", errors="replace")
 
 
 def _terminate_process_tree(process: subprocess.Popen[bytes], *, grace_secs: float) -> None:
@@ -65,8 +47,7 @@ def _terminate_process_tree(process: subprocess.Popen[bytes], *, grace_secs: flo
 class ExternalHookRunner:
     """Run one external hook command with context transport and timeout handling."""
 
-    def __init__(self, project_root: Path, *, env: Mapping[str, str] | None = None) -> None:
-        self._project_root = project_root.expanduser().resolve()
+    def __init__(self, *, env: Mapping[str, str] | None = None) -> None:
         # The environment hooks run in, and whose MERIDIAN_HOOKS_ENABLED gates them.
         self._env = os.environ if env is None else env
 
@@ -101,22 +82,42 @@ class ExternalHookRunner:
         pin_launching_build(env, write_roots=())
         write_pinned_shim(env)
         start = time.monotonic()
-        process: subprocess.Popen[bytes] | None = None
 
         try:
             process = subprocess.Popen(
                 hook.command,
                 shell=True,
-                cwd=self._project_root,
+                # A machine event has no project; its rows run in the home directory.
+                cwd=context.project_root or get_home_path(),
                 env=env,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
-            stdout, stderr = process.communicate(
-                input=context.to_json().encode("utf-8"),
-                timeout=timeout_secs,
-            )
+            try:
+                stdout, stderr = process.communicate(
+                    input=context.to_json().encode("utf-8"),
+                    timeout=timeout_secs,
+                )
+            except subprocess.TimeoutExpired:
+                _terminate_process_tree(process, grace_secs=_TERM_GRACE_SECONDS)
+                # communicate() keeps what earlier calls read, so the last one has it all.
+                try:
+                    stdout, stderr = process.communicate(timeout=1.0)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    stdout, stderr = process.communicate()
+                # No exit code: the tree was killed, and reaping it elsewhere can leave 0.
+                return HookResult(
+                    hook_name=hook.name,
+                    event=context.event_name,
+                    outcome="timeout",
+                    success=False,
+                    error=f"Timed out after {timeout_secs}s.",
+                    duration_ms=int((time.monotonic() - start) * 1000),
+                    stdout=_tail_text(stdout),
+                    stderr=_tail_text(stderr),
+                )
             duration_ms = int((time.monotonic() - start) * 1000)
             if process.returncode == 0:
                 return HookResult(
@@ -137,36 +138,6 @@ class ExternalHookRunner:
                 error=f"Exited with code {process.returncode}.",
                 exit_code=process.returncode,
                 duration_ms=duration_ms,
-                stdout=_tail_text(stdout),
-                stderr=_tail_text(stderr),
-            )
-        except subprocess.TimeoutExpired as exc:
-            stdout = _as_bytes(exc.stdout)
-            stderr = _as_bytes(exc.stderr)
-
-            if process is not None:
-                _terminate_process_tree(process, grace_secs=_TERM_GRACE_SECONDS)
-                try:
-                    term_stdout, term_stderr = process.communicate(timeout=1.0)
-                except subprocess.TimeoutExpired as kill_exc:
-                    stdout += _as_bytes(kill_exc.stdout)
-                    stderr += _as_bytes(kill_exc.stderr)
-                    process.kill()
-                    kill_stdout, kill_stderr = process.communicate()
-                    stdout += kill_stdout
-                    stderr += kill_stderr
-                else:
-                    stdout += term_stdout
-                    stderr += term_stderr
-
-            return HookResult(
-                hook_name=hook.name,
-                event=context.event_name,
-                outcome="timeout",
-                success=False,
-                error=f"Timed out after {timeout_secs}s.",
-                exit_code=None if process is None else process.returncode,
-                duration_ms=int((time.monotonic() - start) * 1000),
                 stdout=_tail_text(stdout),
                 stderr=_tail_text(stderr),
             )

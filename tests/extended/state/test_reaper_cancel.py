@@ -41,7 +41,6 @@ def _patch_spawn_cancel_runtime_resolution(
     monkeypatch: pytest.MonkeyPatch,
     *,
     runtime_root: Path,
-    spawn_id: str,
 ) -> None:
     monkeypatch.setattr(
         "meridian.lib.ops.spawn.api.resolve_runtime_root_and_config",
@@ -50,10 +49,6 @@ def _patch_spawn_cancel_runtime_resolution(
     monkeypatch.setattr(
         "meridian.lib.ops.spawn.api.resolve_runtime_root",
         lambda _project_root: runtime_root,
-    )
-    monkeypatch.setattr(
-        "meridian.lib.ops.spawn.api.resolve_spawn_target",
-        lambda _project_root, _spawn_id: spawn_id,
     )
 
 
@@ -218,11 +213,7 @@ def test_spawn_cancel_refuses_live_managed_primary_without_force(
         started_at=_OLD_STARTED_AT,
     )
     _write_session_lease(runtime_root)
-    _patch_spawn_cancel_runtime_resolution(
-        monkeypatch,
-        runtime_root=runtime_root,
-        spawn_id=spawn_id,
-    )
+    _patch_spawn_cancel_runtime_resolution(monkeypatch, runtime_root=runtime_root)
     monkeypatch.setattr(
         "meridian.lib.state.session_store.is_process_alive_with_birth",
         lambda pid, birth: pid == 8101 and birth == 8101.0,
@@ -270,11 +261,7 @@ def test_spawn_cancel_refuses_process_verified_live_primary_without_readable_lea
         lease_path = runtime_root / "sessions" / "c1.lease.json"
         lease_path.parent.mkdir(parents=True, exist_ok=True)
         lease_path.write_text(lease_content, encoding="utf-8")
-    _patch_spawn_cancel_runtime_resolution(
-        monkeypatch,
-        runtime_root=runtime_root,
-        spawn_id=spawn_id,
-    )
+    _patch_spawn_cancel_runtime_resolution(monkeypatch, runtime_root=runtime_root)
     monkeypatch.setattr(
         "meridian.lib.core.spawn_service.is_process_alive_with_birth",
         lambda pid, birth: pid == 8201 and birth == 8201.0,
@@ -322,11 +309,7 @@ def test_spawn_cancel_allows_forced_or_dead_managed_primary(
         tui_pid=None,
         activity="idle",
     )
-    _patch_spawn_cancel_runtime_resolution(
-        monkeypatch,
-        runtime_root=runtime_root,
-        spawn_id=spawn_id,
-    )
+    _patch_spawn_cancel_runtime_resolution(monkeypatch, runtime_root=runtime_root)
     monkeypatch.setattr(
         "meridian.lib.state.session_store.is_process_alive_with_birth",
         lambda pid, birth: pid == 8101 and birth == 8101.0 and lease_owner_alive,
@@ -368,11 +351,7 @@ def test_spawn_cancel_returns_promptly_when_managed_primary_is_already_dead(
         tui_pid=None,
         activity="idle",
     )
-    _patch_spawn_cancel_runtime_resolution(
-        monkeypatch,
-        runtime_root=runtime_root,
-        spawn_id=spawn_id,
-    )
+    _patch_spawn_cancel_runtime_resolution(monkeypatch, runtime_root=runtime_root)
     monkeypatch.setattr(
         "meridian.lib.state.session_store.is_process_alive_with_birth",
         lambda _pid, _birth: False,
@@ -409,11 +388,7 @@ def test_spawn_cancel_managed_primary_without_runner_converges_to_terminal(
         tui_pid=7203,
         activity="idle",
     )
-    _patch_spawn_cancel_runtime_resolution(
-        monkeypatch,
-        runtime_root=runtime_root,
-        spawn_id=spawn_id,
-    )
+    _patch_spawn_cancel_runtime_resolution(monkeypatch, runtime_root=runtime_root)
     fake_managed_primary_birth_liveness(monkeypatch, set())
     monkeypatch.setattr("meridian.lib.core.spawn_service._CANCEL_GRACE_SECS", 0.01)
     monkeypatch.setattr("meridian.lib.core.spawn_service._CANCEL_KILL_SECS", 0.01)

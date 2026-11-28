@@ -2,29 +2,32 @@ import asyncio
 import os
 import sqlite3
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import nullcontext, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+import structlog
+
 from meridian.lib.bootstrap.services import (
     RuntimeReadContext,
     RuntimeWriteContext,
-    build_spawn_application_service,
     build_spawn_application_service_from_roots,
     prepare_for_runtime_write,
 )
 from meridian.lib.config.loader import load_config
 from meridian.lib.config.models import MeridianConfig
+from meridian.lib.core.caller import same_runtime_root
 from meridian.lib.core.caller_boundary import CallerBoundaryCheck
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.context_ref import context_ref_values
 from meridian.lib.core.depth import max_depth_reached
 from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.native_identity import NativeSessionUnavailable
-from meridian.lib.core.refs import parse_ref
+from meridian.lib.core.refs import RefNotFound, parse_ref
 from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.core.spawn_lifecycle import (
     ACTIVE_SPAWN_STATUSES,
@@ -39,7 +42,6 @@ from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.telemetry import register_debug_trace_observer
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.bundle import project_effective_policy
-from meridian.lib.idle.deadline import cache_deadline
 from meridian.lib.launch.continue_launch import (
     ContinueHold,
     begin_continue,
@@ -52,7 +54,10 @@ from meridian.lib.launch.continue_replay import (
 )
 from meridian.lib.launch.fork import require_replayed_agent
 from meridian.lib.launch.request import SessionRequest, cross_harness_continue_error
-from meridian.lib.ops.locate import resolve_spawn_target, resolve_spawn_targets
+from meridian.lib.ops.locate import (
+    resolve_spawn_target,
+    resolve_spawn_targets,
+)
 from meridian.lib.ops.mars import mars_list_agents
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
 from meridian.lib.ops.relocate_gate import copy_checkout_note, relocate_hint
@@ -67,15 +72,19 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_root_for_read,
     runtime_context,
 )
+from meridian.lib.ops.spawn.idle import spawn_idle
 from meridian.lib.ops.work_attachment import resolve_current_work_alias
 from meridian.lib.ops.work_membership import active_session_work_ids, spawn_work_id, work_spawns
+from meridian.lib.platform.locking import try_lock_file
 from meridian.lib.state import history_index, session_store, spawn_store, work_store
 from meridian.lib.state.history_index import indexed_spawn_scan
-from meridian.lib.state.idle_store import IdleStore
+from meridian.lib.state.machine_identity import machine_identity_or_none
+from meridian.lib.state.machine_ids import recent_claim_roots
 from meridian.lib.state.paths import LaunchPaths, resolve_project_paths
 from meridian.lib.state.primary_meta import (
     read_primary_surface_metadata,
 )
+from meridian.lib.state.runtime_root import runtime_root_project_id
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_observations import LaunchKey, WaitPin, live_wait_pins
 from meridian.lib.state.spawn_observations import record as record_spawn_observation
@@ -95,6 +104,7 @@ from meridian.lib.state.spawn_status import (
     read_derived,
 )
 from meridian.lib.state.spawn_tree import collect_descendants, descendant_id_set
+from meridian.lib.state.user_paths import get_user_home, project_lifetime_lock_path
 from meridian.lib.state.work_state import slugify
 from meridian.lib.telemetry.init import setup_telemetry
 from meridian.lib.telemetry.observer import register_spawn_telemetry_observer
@@ -118,10 +128,10 @@ from .models import (
     SpawnCreateInput,
     SpawnDetailOutput,
     SpawnForkInput,
-    SpawnIdle,
     SpawnListEntry,
     SpawnListInput,
     SpawnListOutput,
+    SpawnLocation,
     SpawnRearmInput,
     SpawnShowInput,
     SpawnSignalInput,
@@ -165,6 +175,8 @@ from .query import (
 
 _WAIT_PROGRESS_INTERVAL_SECS = 5.0
 _WAIT_POLL_INTERVAL_SECS = 0.25
+
+logger = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -268,35 +280,6 @@ def _surface_primary_activity(status: str, activity: str | None) -> str | None:
     return normalized
 
 
-def _spawn_idle(row: SpawnRecord, session_id: str | None, activity: str | None) -> SpawnIdle | None:
-    """The row's open idle stretch: one file read keyed by its own harness session.
-
-    A stretch closes when a user-loop turn starts, so injected turns (wakes, task
-    notifications, peer messages, keepwarm) leave it open. A primary whose harness
-    reports it mid-turn is not idle, whatever a crashed session's stretch says.
-    """
-
-    if (
-        not session_id
-        or not row.harness
-        or not is_active_spawn_status(row.status)
-        or activity in {"starting", "turn_active", "finalizing"}
-    ):
-        return None
-    try:
-        state = IdleStore().read(row.harness, session_id)
-    except ValueError:  # a session id the store refuses as a filename
-        return None
-    if state is None or not state.stretch_open or state.idle_since_ms is None:
-        return None
-    deadline = cache_deadline(row.harness, state.idle_since_ms / 1000, state)
-    return SpawnIdle(
-        since=_iso_utc_ms(state.idle_since_ms),
-        warm_until=_iso_utc_ms(round(deadline[0] * 1000)) if deadline else None,
-        ttl_estimated=deadline[1] if deadline else True,
-    )
-
-
 def _chat_work_ids(runtime_root: Path, rows: Sequence[SpawnRecord]) -> dict[str, str | None]:
     """Each row's chat's current work item, as `spawn show` reports it (the row keeps launch-time).
 
@@ -309,14 +292,6 @@ def _chat_work_ids(runtime_root: Path, rows: Sequence[SpawnRecord]) -> dict[str,
             runtime_root, {row.entry_chat_id for row in rows if row.entry_chat_id}
         )
     }
-
-
-def _iso_utc_ms(epoch_ms: int) -> str:
-    return (
-        datetime.fromtimestamp(epoch_ms / 1000, UTC)
-        .isoformat(timespec="milliseconds")
-        .replace("+00:00", "Z")
-    )
 
 
 def _spawn_display_label(row: SpawnRecord) -> str | None:
@@ -737,43 +712,13 @@ async def spawn_create(
     )
 
 
-def spawn_list_sync(
-    payload: SpawnListInput,
-    ctx: RuntimeContext | None = None,
-    *,
-    sink: OutputSink | None = None,
-    prepared: RuntimeReadContext | None = None,
-) -> SpawnListOutput:
-    _ = (ctx, sink)
-    if prepared is not None and prepared.runtime_root is None:
-        return SpawnListOutput(spawns=())
-    project_root, runtime_root = _resolve_spawn_read_authority(
-        project_root=payload.project_root,
-        prepared=prepared,
-    )
-    if runtime_root is None:
-        return SpawnListOutput(spawns=())
-
-    work_id = resolve_current_work_alias(
-        payload.work,
-        usage="meridian spawn list --work <work-id>",
-        project_root=project_root,
-        runtime_root=runtime_root,
-    )
-    if work_id is not None:
-        spawns = list(reversed(work_spawns(runtime_root, work_id)))
-    else:
-        scanned = overlay_derived(runtime_root, indexed_spawn_scan(runtime_root).records)
-        spawns = list(reversed(scanned))
-
-    # When statuses is empty tuple, show all statuses but cap intelligently:
-    # always include all active spawns, pad with recent non-active up to limit.
-    show_all = payload.statuses == ()
+def _filter_listed(payload: SpawnListInput, spawns: list[SpawnRecord]) -> list[SpawnRecord]:
+    """Apply the list's status, model, profile and primary filters."""
 
     if payload.statuses:
         wanted_statuses = set(payload.statuses)
         spawns = [row for row in spawns if row.status in wanted_statuses]
-    elif show_all:
+    elif payload.statuses == ():
         pass
     elif payload.status is not None:
         spawns = [row for row in spawns if row.status == payload.status]
@@ -789,24 +734,34 @@ def spawn_list_sync(
         spawns = [row for row in spawns if row.agent == wanted_profile]
     if payload.primary:
         spawns = [row for row in spawns if row.kind == "primary"]
+    return spawns
 
-    total_count = len(spawns)
-    limit = payload.limit if payload.limit > 0 else 20
 
-    if show_all:
-        # Always include all active spawns, fill remaining slots with recent non-active.
-        active = [row for row in spawns if is_active_spawn_status(row.status)]
-        non_active = [row for row in spawns if not is_active_spawn_status(row.status)]
-        effective_limit = max(len(active), limit)
-        remaining = effective_limit - len(active)
-        selected = active + non_active[:remaining]
-    else:
-        selected = spawns[:limit]
+def _listed_rows(runtime_root: Path, payload: SpawnListInput) -> list[SpawnRecord]:
+    """The rows ``payload`` can list, oldest first, from the index.
 
-    truncated = total_count > len(selected)
-    chat_work = _chat_work_ids(runtime_root, selected)
+    Unless the list is of every status, the index is asked for the stored-active rows and
+    the wanted statuses only, as ``locate_run`` asks for the active ones: reading a project's
+    whole history to show a handful of live rows costs seconds on a busy project.
+    ``overlay_derived`` moves a stored-active row to a terminal status and no other way, so
+    the stored-active rows hold every row that can be listed as running.
+    """
+
+    stored: set[str] | None = None
+    if payload.statuses != ():
+        wanted = payload.statuses or ((payload.status,) if payload.status is not None else ())
+        stored = {*ACTIVE_SPAWN_STATUSES, *map(str, wanted)}
+    scan = indexed_spawn_scan(runtime_root, statuses=stored)
+    return overlay_derived(runtime_root, scan.records)
+
+
+def _list_entries(
+    runtime_root: Path, rows: Sequence[SpawnRecord], *, machine: str | None
+) -> list[SpawnListEntry]:
+    chat_work = _chat_work_ids(runtime_root, rows)
+    project_id = runtime_root_project_id(runtime_root)
     entries: list[SpawnListEntry] = []
-    for row in selected:
+    for row in rows:
         kind = "primary" if (row.kind or "").strip() == "primary" else None
         managed_backend = False
         activity: str | None = None
@@ -828,17 +783,155 @@ def spawn_list_sync(
                 model=row.model or "",
                 agent=row.agent or None,
                 work_id=chat_work.get(row.entry_chat_id or ""),
-                idle=_spawn_idle(row, session_id, activity),
+                idle=spawn_idle(row, session_id, activity),
                 kind=kind,
                 activity=surfaced_activity,
                 managed_backend=managed_backend,
                 duration_secs=row.total_usage.duration_secs,
                 cost_usd=row.total_usage.total_cost_usd,
+                located=SpawnLocation(
+                    project_root=row.control_root,
+                    project_id=project_id,
+                    machine=machine,
+                ),
             )
         )
+    return entries
 
+
+def _machine_name() -> str | None:
+    identity = machine_identity_or_none()
+    return identity.name if identity is not None else None
+
+
+_NEW_CLAIM_WINDOW_SECONDS = 120.0
+
+
+def _live_project_roots() -> list[Path]:
+    """Runtime roots with a running session: the ones whose lifetime lock is held.
+
+    A session holds its project's lifetime lock shared for as long as it runs, so a lock
+    that can be taken exclusively, or that does not exist, means no live session. The
+    lock is only tried and released at once; no project's rows are opened to find out.
+    """
+
+    projects = get_user_home() / "projects"
+    try:
+        roots = sorted(path for path in projects.iterdir() if path.is_dir())
+    except FileNotFoundError:
+        return []
+    live: list[Path] = []
+    for root in roots:
+        lock_path = project_lifetime_lock_path(root)
+        if not lock_path.exists():
+            continue
+        with try_lock_file(lock_path, reentrant=False, read_only_existing=True) as handle:
+            if handle is None:
+                live.append(root)
+    return live
+
+
+def _spawn_list_all_projects(payload: SpawnListInput) -> SpawnListOutput:
+    """Running sessions in every project on this machine."""
+
+    if payload.statuses == ():
+        raise ValueError(
+            "--global lists running sessions only: --all is a scan of every project's "
+            "history. Use `meridian session search --global` to search it."
+        )
+    wanted = payload.statuses or ((payload.status,) if payload.status is not None else ())
+    if payload.failed or payload.work or not all(is_active_spawn_status(item) for item in wanted):
+        raise ValueError(
+            "--global lists running sessions only; it takes no --status, --view, --failed or "
+            "--work for finished or per-project history. "
+            "Use `meridian session search --global` to search it."
+        )
+    machine = _machine_name()
+    found: list[tuple[Path, SpawnRecord]] = []
+    # A spawn reports running before its runner takes the lifetime lock, so the roots of
+    # claims from the last two minutes are opened too.
+    # The lock scan and a claim can spell one root two ways (``/tmp`` and ``/private/tmp``).
+    roots = {
+        root.resolve(): root
+        for root in (*_live_project_roots(), *recent_claim_roots(_NEW_CLAIM_WINDOW_SECONDS))
+    }
+    for root in sorted(roots.values()):
+        if not root.is_dir():  # a claim's root that was pruned
+            continue
+        try:
+            rows = _listed_rows(root, payload)
+        except (OSError, history_index.HistoryIndexBusy, sqlite3.Error):
+            continue  # pruned or rebuilt while the list was being built: it reads as empty
+        found.extend((root, row) for row in _filter_listed(payload, rows))
+    found.sort(key=lambda item: item[1].started_at or "", reverse=True)
+    selected = found[: payload.limit]
+    entries_by_root = {
+        root: {
+            entry.spawn_id: entry
+            for entry in _list_entries(
+                root, [row for owner, row in selected if owner == root], machine=machine
+            )
+        }
+        for root in dict.fromkeys(root for root, _ in selected)
+    }
+    entries = [entries_by_root[root][row.id] for root, row in selected]
     return SpawnListOutput(
         spawns=tuple(entries),
+        total_count=len(found) if len(found) > len(selected) else None,
+        truncated=len(found) > len(selected),
+        show_project=True,
+    )
+
+
+def spawn_list_sync(
+    payload: SpawnListInput,
+    ctx: RuntimeContext | None = None,
+    *,
+    sink: OutputSink | None = None,
+    prepared: RuntimeReadContext | None = None,
+) -> SpawnListOutput:
+    _ = (ctx, sink)
+    if payload.all_projects:
+        return _spawn_list_all_projects(payload)
+    if prepared is not None and prepared.runtime_root is None:
+        return SpawnListOutput(spawns=())
+    project_root, runtime_root = _resolve_spawn_read_authority(
+        project_root=payload.project_root,
+        prepared=prepared,
+    )
+    if runtime_root is None:
+        return SpawnListOutput(spawns=())
+
+    work_id = resolve_current_work_alias(
+        payload.work,
+        usage="meridian spawn list --work <work-id>",
+        project_root=project_root,
+        runtime_root=runtime_root,
+    )
+    if work_id is not None:
+        spawns = list(reversed(work_spawns(runtime_root, work_id)))
+    else:
+        spawns = list(reversed(_listed_rows(runtime_root, payload)))
+    spawns = _filter_listed(payload, spawns)
+
+    # When statuses is empty tuple, show all statuses but cap intelligently:
+    # always include all active spawns, pad with recent non-active up to limit.
+    show_all = payload.statuses == ()
+    total_count = len(spawns)
+    limit = payload.limit
+
+    if show_all:
+        # Always include all active spawns, fill remaining slots with recent non-active.
+        active = [row for row in spawns if is_active_spawn_status(row.status)]
+        non_active = [row for row in spawns if not is_active_spawn_status(row.status)]
+        remaining = None if limit is None else max(len(active), limit) - len(active)
+        selected = active + non_active[:remaining]
+    else:
+        selected = spawns[:limit]
+
+    truncated = total_count > len(selected)
+    return SpawnListOutput(
+        spawns=tuple(_list_entries(runtime_root, selected, machine=_machine_name())),
         total_count=total_count if truncated else None,
         truncated=truncated,
     )
@@ -867,13 +960,13 @@ def spawn_children_sync(
         prepared=prepared,
     )
     caller_ref = _resolve_caller_spawn_id(payload.spawn_id, ctx)
-    if runtime_root is None:
+    try:
+        target = resolve_spawn_target(project_root, caller_ref, runtime_root=runtime_root)
+    except RefNotFound:
+        if runtime_root is not None:
+            raise
         return SpawnListOutput(spawns=(), text_view="children")
-    spawn_id = resolve_spawn_target(
-        project_root,
-        caller_ref,
-        runtime_root=runtime_root,
-    )
+    runtime_root = target.runtime_root
 
     children = list(
         reversed(
@@ -881,7 +974,7 @@ def spawn_children_sync(
                 runtime_root,
                 indexed_spawn_scan(
                     runtime_root,
-                    parent_id=spawn_id,
+                    parent_id=target.spawn_id,
                 ).records,
             )
         )
@@ -894,7 +987,7 @@ def spawn_children_sync(
             model=row.model or "",
             agent=row.agent or None,
             work_id=chat_work.get(row.entry_chat_id or ""),
-            idle=_spawn_idle(row, row.harness_session_id, None),
+            idle=spawn_idle(row, row.harness_session_id, None),
             desc=_spawn_display_label(row),
             duration_secs=row.total_usage.duration_secs,
             cost_usd=row.total_usage.total_cost_usd,
@@ -1070,20 +1163,12 @@ def spawn_show_sync(
         project_root=payload.project_root,
         prepared=prepared,
     )
-    if runtime_root is None:
-        normalized = payload.spawn_id.strip()
-        raise ValueError(f"Spawn '{normalized}' not found")
-    if prepared is not None:
-        spawn_id = resolve_spawn_target(
-            project_root,
-            payload.spawn_id,
-            runtime_root=runtime_root,
-        )
-    else:
-        spawn_id = resolve_spawn_target(project_root, payload.spawn_id)
+    target = resolve_spawn_target(project_root, payload.spawn_id, runtime_root=runtime_root)
+    spawn_id = target.spawn_id
+    runtime_root = target.runtime_root
     row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
     if row is None:
-        raise ValueError(f"Spawn '{spawn_id}' not found")
+        raise RefNotFound(spawn_id, "spawn")
     kind = "primary" if (row.kind or "").strip() == "primary" else None
     managed_backend = False
     activity: str | None = None
@@ -1300,19 +1385,17 @@ def _resolve_signal_spawn(
     runtime_root: Path,
     spawn_id: str | None,
     ctx: RuntimeContext | None,
-) -> SpawnRecord:
+) -> tuple[SpawnRecord, Path]:
+    """The spawn to signal and the runtime root it lives in."""
+
     candidate = _resolve_caller_spawn_id(spawn_id, ctx)
-    resolved_spawn_id = resolve_spawn_target(
-        project_root,
-        candidate,
-        runtime_root=runtime_root,
-    )
-    record = spawn_store.get_spawn(runtime_root, resolved_spawn_id)
+    target = resolve_spawn_target(project_root, candidate, runtime_root=runtime_root)
+    record = spawn_store.get_spawn(target.runtime_root, target.spawn_id)
     if record is None:
-        raise ValueError(f"Spawn '{resolved_spawn_id}' not found")
+        raise RefNotFound(target.spawn_id, "spawn")
     if record.record_mode == "historical":
         raise ValueError("Historical records have no live process ownership")
-    return record
+    return record, target.runtime_root
 
 
 _BARE_REARM_WARNING = (
@@ -1379,7 +1462,7 @@ def _spawn_signal_sync(
         project_root, _ = resolve_runtime_root_and_config(payload.project_root)
         runtime_root = resolve_runtime_root(project_root)
     try:
-        target = _resolve_signal_spawn(
+        target, runtime_root = _resolve_signal_spawn(
             project_root=project_root,
             runtime_root=runtime_root,
             spawn_id=payload.spawn_id,
@@ -1480,22 +1563,28 @@ async def _spawn_cancel_impl(
             prepared,
             project_root=project_root,
         )
-        spawn_service = build_spawn_application_service(prepared)
     else:
         project_root, _ = resolve_runtime_root_and_config(payload.project_root)
         runtime_root = resolve_runtime_root(project_root)
-        spawn_service = build_spawn_application_service_from_roots(
-            project_root,
-            runtime_root,
-        )
-    if prepared is not None:
-        spawn_id = resolve_spawn_target(
-            project_root,
-            payload.spawn_id,
-            runtime_root=runtime_root,
-        )
-    else:
-        spawn_id = resolve_spawn_target(project_root, payload.spawn_id)
+    # Resolve first: the target's own project decides which hooks and which root the
+    # cancel runs under.
+    target = resolve_spawn_target(project_root, payload.spawn_id, runtime_root=runtime_root)
+    spawn_id = str(target.spawn_id)
+    service_project = project_root
+    lifecycle: SpawnLifecycleService | None = None
+    hooks_skipped = False
+    if not same_runtime_root(target.runtime_root, runtime_root):
+        runtime_root = target.runtime_root
+        if target.project_root is not None and target.project_root.is_dir():
+            service_project = target.project_root
+        else:
+            # The hooks' config went with the directory: there is nothing to load, and a
+            # session that can be found by ID must still be stoppable.
+            lifecycle = SpawnLifecycleService(runtime_root)
+            hooks_skipped = True
+    spawn_service = build_spawn_application_service_from_roots(
+        service_project, runtime_root, lifecycle=lifecycle
+    )
     record = spawn_store.get_spawn(runtime_root, spawn_id)
     if record is not None and record.record_mode == "historical":
         raise ValueError("Historical records cannot be cancelled")
@@ -1522,7 +1611,15 @@ async def _spawn_cancel_impl(
             spawn_id=outcome.spawn_id,
             launch_number=outcome.launch_number,
         )
-    return _spawn_cancel_output_from_outcome(outcome)
+    output = _spawn_cancel_output_from_outcome(outcome)
+    if hooks_skipped:
+        output = output.model_copy(
+            update={
+                "message": f"{output.message} Its project directory is gone, so no project "
+                "hooks ran."
+            }
+        )
+    return output
 
 
 def spawn_cancel_all_sync(
@@ -1665,7 +1762,7 @@ def _spawn_is_terminal(status: str) -> bool:
 
 def _resolve_wait_targets(
     payload: SpawnWaitInput,
-    runtime_root: Path,
+    runtime_root: Path | None,
     ctx: RuntimeContext,
     *,
     deadline: float,
@@ -1685,7 +1782,7 @@ def _resolve_wait_targets(
         return _WaitTargetDiscovery(blocked_on_ids=tuple(dict.fromkeys(candidates)))
 
     chat_id = (ctx.chat_id or "").strip()
-    if not chat_id:
+    if not chat_id or runtime_root is None:
         raise ValueError(
             "No-arg wait requires MERIDIAN_CHAT_ID (run from inside a meridian session)"
         )
@@ -1810,12 +1907,12 @@ def _emit_wait_set(
     project_root: Path,
     *,
     chat_id: str | None = None,
-    runtime_root: Path | None = None,
+    runtime_roots: Mapping[str, Path],
     sink: OutputSink,
 ) -> None:
     entries: list[SpawnListEntry] = []
     for spawn_id in spawn_ids:
-        row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
+        row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_roots[spawn_id])
         entries.append(
             SpawnListEntry(
                 spawn_id=spawn_id,
@@ -1896,28 +1993,26 @@ def _build_wait_checkpoint_output(
     details: tuple[SpawnDetailOutput, ...],
     *,
     pending_ids: tuple[str, ...],
-    runtime_root: Path,
+    runtime_roots: Mapping[str, Path],
     chat_id: str | None,
     elapsed_secs: float,
 ) -> SpawnWaitMultiOutput:
-    tree_rows = overlay_derived(
-        runtime_root,
-        spawn_store.list_spawns(runtime_root).records,
-    )
-    checkpoint_descendants = {
-        spawn_id: tuple(
-            row.id
-            for row in collect_descendants(spawn_id, tree_rows)
-            if row.id != spawn_id and is_active_spawn_status(row.status)
+    checkpoint_descendants: dict[str, tuple[str, ...]] = {}
+    checkpoint_holds: dict[str, CheckpointHold | None] = {}
+    for runtime_root in dict.fromkeys(runtime_roots[spawn_id] for spawn_id in pending_ids):
+        tree_rows = overlay_derived(
+            runtime_root,
+            spawn_store.list_spawns(runtime_root).records,
         )
-        for spawn_id in pending_ids
-    }
-    rows_by_id = {row.id: row for row in tree_rows}
-    checkpoint_holds = {
-        spawn_id: _checkpoint_hold(runtime_root, rows_by_id[spawn_id])
-        for spawn_id in pending_ids
-        if spawn_id in rows_by_id
-    }
+        rows_by_id = {row.id: row for row in tree_rows}
+        for spawn_id in (i for i in pending_ids if runtime_roots[i] == runtime_root):
+            checkpoint_descendants[spawn_id] = tuple(
+                row.id
+                for row in collect_descendants(spawn_id, tree_rows)
+                if row.id != spawn_id and is_active_spawn_status(row.status)
+            )
+            if spawn_id in rows_by_id:
+                checkpoint_holds[spawn_id] = _checkpoint_hold(runtime_root, rows_by_id[spawn_id])
     return _build_wait_multi_output(details).model_copy(
         update={
             "checkpoint": True,
@@ -1989,16 +2084,18 @@ def spawn_wait_sync(
     if prepared is not None:
         project_root = _project_root_from_prepared(prepared)
         config = _config_from_prepared(prepared)
-        runtime_root = _runtime_root_from_prepared_for_read(prepared, project_root=project_root)
+        runtime_root = prepared.runtime_root or resolve_runtime_root_for_read(project_root)
     else:
         project_root, config = resolve_runtime_root_and_config_for_read(payload.project_root)
         runtime_root = resolve_runtime_root_for_read(project_root)
-    if runtime_root is None:
-        active_sink.status("No pending spawns.")
-        return SpawnWaitMultiOutput()
     has_explicit_ids = bool(payload.spawn_ids) or bool(
         payload.spawn_id is not None and payload.spawn_id.strip()
     )
+    # A claimed ID names a session in any project, so a caller whose own project has no
+    # state can still wait on one.
+    if runtime_root is None and not has_explicit_ids:
+        active_sink.status("No pending spawns.")
+        return SpawnWaitMultiOutput()
     wait_chat_id = None if has_explicit_ids else (resolved_context.chat_id or "").strip() or None
     timeout_minutes = (
         payload.timeout if payload.timeout is not None else config.wait_timeout_minutes
@@ -2015,6 +2112,7 @@ def spawn_wait_sync(
         resolved_context,
         deadline=min(wait_deadline, time.monotonic() + history_index.QUERY_TIMEOUT),
     )
+    runtime_roots: dict[str, Path] = {}
     if targets.discovery_pending:
         return SpawnWaitMultiOutput(
             checkpoint=True,
@@ -2031,14 +2129,23 @@ def spawn_wait_sync(
         return SpawnWaitMultiOutput()
 
     if has_explicit_ids:
-        blocked_on_ids = resolve_spawn_targets(
-            project_root,
-            blocked_on_ids,
-            runtime_root=runtime_root,
-        )
+        located = resolve_spawn_targets(project_root, blocked_on_ids, runtime_root=runtime_root)
+        blocked_on_ids = tuple(str(target.spawn_id) for target in located)
+        runtime_roots = {str(target.spawn_id): target.runtime_root for target in located}
+    elif runtime_root is not None:
+        runtime_roots = dict.fromkeys(blocked_on_ids, runtime_root)
 
+    # A target in another project is watched, not owned: nothing is recorded for the
+    # caller there, because the caller's ID means nothing in that root.
+    own_ids = frozenset(
+        spawn_id
+        for spawn_id, root in runtime_roots.items()
+        if resolved_context.caller_in(root) is not None
+    )
     parent_wait_observer_id = (
-        str(resolved_context.spawn_id) if payload.observe and resolved_context.spawn_id else None
+        str(resolved_context.spawn_id)
+        if payload.observe and resolved_context.caller_in(runtime_root)
+        else None
     )
     # Each target is waited on as the launch it is now, or the one an earlier run of this
     # wait pinned (a `--yield-after-secs` re-run is a new process). Pins are stored only for
@@ -2049,12 +2156,12 @@ def spawn_wait_sync(
             parent_wait_observer_id,
             owed_consumed_ids(runtime_root, (parent_wait_observer_id,)),
         )
-        if parent_wait_observer_id is not None and has_explicit_ids
+        if runtime_root is not None and parent_wait_observer_id is not None and has_explicit_ids
         else {}
     )
     pins: dict[str, int] = {}
     for spawn_id in blocked_on_ids:
-        record = spawn_store.get_spawn(runtime_root, spawn_id)
+        record = spawn_store.get_spawn(runtime_roots[spawn_id], spawn_id)
         if record is not None and record.record_mode == "historical":
             raise ValueError("Historical records cannot be waited on")
         pins[spawn_id] = stored_pins.get(spawn_id) or (record.launch_number if record else 1)
@@ -2063,7 +2170,7 @@ def spawn_wait_sync(
             raise ValueError("Historical records cannot be waited on")
     observed_keys = tuple(
         (
-            *(str(LaunchKey(spawn_id, n)) for spawn_id, n in pins.items()),
+            *(str(LaunchKey(spawn_id, n)) for spawn_id, n in pins.items() if spawn_id in own_ids),
             *(str(LaunchKey.of(row)) for row in owed_rows),
         )
     )
@@ -2082,21 +2189,26 @@ def spawn_wait_sync(
         if not has_explicit_ids:
             return {}
         expires_at = time.time() + checkpoint_seconds
-        return {target: WaitPin(n=n, expires_at=expires_at) for target, n in pins.items()}
+        return {
+            target: WaitPin(n=n, expires_at=expires_at)
+            for target, n in pins.items()
+            if target in own_ids
+        }
 
-    record_spawn_observation(
-        runtime_root=runtime_root,
-        parent_spawn_id=parent_wait_observer_id,
-        waiting_add=observed_keys,
-        pins_set=pin_documents(),
-        lease_seconds=lease_seconds,
-    )
+    def observe(**changes: Any) -> None:
+        if runtime_root is not None:
+            record_spawn_observation(
+                runtime_root=runtime_root, parent_spawn_id=parent_wait_observer_id, **changes
+            )
+
+    observe(waiting_add=observed_keys, pins_set=pin_documents(), lease_seconds=lease_seconds)
     details: tuple[SpawnDetailOutput, ...] = ()
     owed_spawns: tuple[SpawnDetailOutput, ...] = ()
     try:
-        owed_spawns = delivery_details(
-            project_root=project_root, runtime_root=runtime_root, rows=owed_rows
-        )
+        if runtime_root is not None:
+            owed_spawns = delivery_details(
+                project_root=project_root, runtime_root=runtime_root, rows=owed_rows
+            )
         if not blocked_on_ids:
             output = _build_wait_multi_output(())
         else:
@@ -2104,7 +2216,7 @@ def spawn_wait_sync(
                 blocked_on_ids,
                 project_root,
                 chat_id=wait_chat_id,
-                runtime_root=runtime_root,
+                runtime_roots=runtime_roots,
                 sink=active_sink,
             )
             rows: dict[str, SpawnRecord] = {}
@@ -2118,18 +2230,18 @@ def spawn_wait_sync(
             next_progress = started + progress_interval
 
             while True:
-                record_spawn_observation(
-                    runtime_root=runtime_root,
-                    parent_spawn_id=parent_wait_observer_id,
+                observe(
                     waiting_add=tuple(
-                        str(LaunchKey(spawn_id, pins[spawn_id])) for spawn_id in pending
+                        str(LaunchKey(spawn_id, pins[spawn_id]))
+                        for spawn_id in pending
+                        if spawn_id in own_ids
                     ),
                     pins_set=pin_documents(),
                     lease_seconds=lease_seconds,
                 )
                 for spawn_id in tuple(pending):
                     try:
-                        launch_poll = poll_launch(runtime_root, spawn_id, pins[spawn_id])
+                        launch_poll = poll_launch(runtime_roots[spawn_id], spawn_id, pins[spawn_id])
                     except LaunchNotFound:
                         if has_explicit_ids:
                             raise
@@ -2167,7 +2279,7 @@ def spawn_wait_sync(
                         project_root=project_root,
                         row=rows[spawn_id],
                         include_report_body=payload.include_report_body,
-                        runtime_root=runtime_root,
+                        runtime_root=runtime_roots[spawn_id],
                     )
                     for spawn_id in blocked_on_ids
                     if spawn_id in rows
@@ -2185,13 +2297,13 @@ def spawn_wait_sync(
                     output = _build_wait_checkpoint_output(
                         details,
                         pending_ids=pending_ids,
-                        runtime_root=runtime_root,
+                        runtime_roots=runtime_roots,
                         chat_id=wait_chat_id,
                         elapsed_secs=now - started,
                     )
                 break
         output = output.model_copy(update={"owed_spawns": owed_spawns})
-        if not has_explicit_ids:
+        if not has_explicit_ids and runtime_root is not None:
             output = output.model_copy(
                 update={
                     "since_started_spawns": _since_started_spawns(
@@ -2205,15 +2317,13 @@ def spawn_wait_sync(
             )
         return output
     finally:
-        record_spawn_observation(
-            runtime_root=runtime_root,
-            parent_spawn_id=parent_wait_observer_id,
+        observe(
             waiting_remove=observed_keys,
             observed_add=(
                 *(
                     str(LaunchKey(detail.spawn_id, pins[detail.spawn_id]))
                     for detail in details
-                    if _spawn_is_terminal(detail.status)
+                    if _spawn_is_terminal(detail.status) and detail.spawn_id in own_ids
                 ),
                 *(str(LaunchKey.of(row)) for row in owed_rows),
             ),
@@ -2244,6 +2354,7 @@ def _source_spawn_for_follow_up(
             project_root,
             payload_spawn_id,
             runtime_root=runtime_root,
+            launching="continue",
         )
     except ValueError:
         if harness_hint is None:
@@ -2254,6 +2365,7 @@ def _source_spawn_for_follow_up(
             payload_spawn_id,
             runtime_root=runtime_root,
             harness_hint=harness_hint,
+            launching="continue",
         )
     if (
         harness_hint is not None
@@ -2459,6 +2571,7 @@ def spawn_fork_sync(
         project_root,
         normalized_source_ref,
         runtime_root=runtime_root,
+        launching="fork",
     )
     source_snapshot = resolved_reference.source_launch_policy_snapshot
     source_check = _run_spawn_creation_boundary(
@@ -2588,7 +2701,7 @@ def spawn_continue_sync(
     )
     if runtime_root is None:
         normalized = payload.spawn_id.strip()
-        raise ValueError(f"Spawn '{normalized}' not found")
+        raise RefNotFound(normalized, "spawn")
     resolved_spawn_id, source_spawn, resolved_reference = _source_spawn_for_follow_up(
         payload.spawn_id,
         project_root,
@@ -2597,7 +2710,7 @@ def spawn_continue_sync(
     )
     # A chat's conversation belongs to the spawn that ran it last: settle which spawn this
     # continue reopens before anything is built, then build everything from that spawn.
-    caller_spawn_id = str(runtime_context(ctx).spawn_id or "") or None
+    caller_spawn_id = str(runtime_context(ctx).caller_in(runtime_root) or "") or None
     target, redirect_notice = resolve_continue_target(
         runtime_root,
         source_spawn,

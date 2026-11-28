@@ -324,7 +324,7 @@ def resolve_capture_source(
     """The exact native source of a terminal spawn's own bound generation, for capture."""
     row = read_stored_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
     if row is None:
-        raise ValueError(f"Spawn '{spawn_id}' not found")
+        raise RefNotFound(spawn_id, "spawn")
     if (
         row.record_mode == "historical"
         or row.status not in TERMINAL_SPAWN_STATUSES
@@ -400,13 +400,15 @@ def resolve_transcript_source(
     try:
         located = locate(project_root, normalized_ref, runtime_root=root)
     except RefNotFound as miss:
-        if miss.kind != "spawn" or root is None:
+        # A claimed ID's row may have been reclaimed from the root its claim names.
+        history_root = miss.claimed_root or root
+        if miss.kind != "spawn" or history_root is None:
             raise
-        indexed = _indexed_spawn(root, normalized_ref, deadline=deadline)
+        indexed = _indexed_spawn(history_root, normalized_ref, deadline=deadline)
         if indexed is None:
             raise
         return _indexed_target(
-            root, indexed, ref=normalized_ref, project_root=project_root, deadline=deadline
+            history_root, indexed, ref=normalized_ref, project_root=project_root, deadline=deadline
         )
 
     if isinstance(located, SpawnHit):

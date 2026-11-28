@@ -24,6 +24,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+from meridian.env_registry import session_free_env
 from meridian.lib.core.delivery import DeliveryKind, MessageRoute, MessageSender
 from meridian.lib.harness.agy import inbox
 from meridian.lib.harness.agy.idle import AgyIdleSensor
@@ -31,7 +32,6 @@ from meridian.lib.harness.agy.state import (
     read_json,
     request_path,
     row_path,
-    scrubbed_env,
     write_private_json,
 )
 
@@ -71,13 +71,13 @@ def call_env(row: HeldRow) -> dict[str, str]:
     """The environment of one command: the session's identity, call by call.
 
     The server's own environment belongs to whoever started ``agy``, so identity comes
-    only from the conversation's row.
+    only from the conversation's row; the config set in that shell stays.
     """
 
     from meridian.lib.core.resolved_context import ResolvedContext
     from meridian.lib.core.types import SpawnId
 
-    env = scrubbed_env(os.environ)
+    env = session_free_env(os.environ)
     env.update(
         ResolvedContext(
             spawn_id=SpawnId(row.spawn_id),
@@ -90,21 +90,8 @@ def call_env(row: HeldRow) -> dict[str, str]:
 
 
 def _idle_env(row: HeldRow) -> dict[str, str]:
-    """The row's identity plus the config the person set in the shell that started ``agy``.
-
-    The identity scrub drops every ``MERIDIAN_*`` name, config overrides such as
-    ``MERIDIAN_NOTIFY_PUSH_BACKEND`` among them; the idle service must see those as it does
-    for any other harness.
-    """
-
-    from meridian.lib.config.loader import OPTION_CATALOG
-
     env = call_env(row)
     env["_MERIDIAN_HARNESS"] = "agy"
-    for option in OPTION_CATALOG.options:
-        for name in option.env_vars:
-            if name in os.environ:
-                env[name] = os.environ[name]
     return env
 
 
@@ -363,7 +350,7 @@ def _reopen(project_root: Path, runtime_root: Path, conversation: str) -> _Reope
             dry_run=False,
         )
     except ValueError as exc:
-        # Its text ends in CLI advice ("; use spawn message ... or --fork ..."), which the
+        # Its text ends in CLI advice ("; use meridian message ... or --fork ..."), which the
         # agy model cannot act on: keep the cause.
         raise ValueError(str(exc).partition("; ")[0]) from exc
     return None if hold is None else _Reopen(chat_id, hold)

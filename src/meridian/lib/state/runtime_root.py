@@ -5,11 +5,12 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from meridian.lib.state.project_identity import (
+    ADHOC_PROJECT_ID_PREFIX,
     ensure_project_identity,
     resolve_project_identity,
     state_id,
 )
-from meridian.lib.state.user_paths import get_project_home
+from meridian.lib.state.user_paths import get_project_home, get_user_home
 
 
 def root_has_runtime_state(runtime_root: Path) -> bool:
@@ -58,4 +59,44 @@ def runtime_override_root(
     return project_root / candidate if project_root is not None else None
 
 
-__all__ = ["derive_runtime_root_from_project", "root_has_runtime_state", "runtime_override_root"]
+def environment_runtime_root(
+    project_root: Path | None, environ: Mapping[str, str] | None = None
+) -> Path | None:
+    """The runtime root an environment names: the ``_MERIDIAN_RUNTIME_DIR`` override, else the
+    root derived from its project. The one rule for ``ResolvedContext`` and the caller's
+    identity."""
+
+    override = runtime_override_root(project_root, environ)
+    if override is not None:
+        return override
+    return derive_runtime_root_from_project(project_root) if project_root is not None else None
+
+
+def runtime_root_project_id(runtime_root: Path) -> str | None:
+    """The committed project ID a runtime root belongs to, from where the root is.
+
+    A root is ``projects/<id>``, and an ID may hold a slash (``team/proj`` is the root
+    ``projects/team/proj``), so the ID is the whole path under ``projects/``, never the
+    directory's name. ``None`` for an ad-hoc root, whose ID is a hash of a path on this
+    machine and names no project anywhere else, and for a root outside ``projects/`` (a
+    ``_MERIDIAN_RUNTIME_DIR`` override).
+    """
+
+    projects = (get_user_home() / "projects").resolve()
+    try:
+        relative = runtime_root.resolve().relative_to(projects)
+    except ValueError:
+        return None
+    project_id = relative.as_posix()
+    if not relative.parts or project_id.startswith(ADHOC_PROJECT_ID_PREFIX):
+        return None
+    return project_id
+
+
+__all__ = [
+    "derive_runtime_root_from_project",
+    "environment_runtime_root",
+    "root_has_runtime_state",
+    "runtime_override_root",
+    "runtime_root_project_id",
+]

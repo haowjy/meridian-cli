@@ -33,11 +33,13 @@ Pass your chat ID as `--from`: `$MERIDIAN_CHAT_ID`, which a restricted shell can
 expand, so copy it from your capabilities block. The new lead's prompt then lists how
 to catch up on this session: its work item, the end of its log, search.
 
-Chat and spawn IDs count per project, so under `meridian -C <other project>` a bare
-`cNNN` names nothing or a different chat. For a handoff to a lead in another project,
-leave `--from` and `--work` out (neither resolves there) and have the brief name the origin with
+A chat or spawn ID issued since Meridian 0.28 names the same session from any project, so
+`--from cNNN` works under `meridian -C <other project>`: the new lead reads this session's
+report and log from its own project. Work items belong to one project, so for a lead in
+another project leave `--work` out. An ID issued before 0.28 counts per project and names
+nothing or a different chat there: leave `--from` out and have the brief name the origin with
 `meridian -C <origin project> session log cNNN --tail 20`.
 
-`--from` attaches the new lead to this session's work item; `--work` names another
+`--from` in the same project attaches the new lead to this session's work item; `--work` names another
 existing item instead. A lead on separate work has no item yet: leave `--work` out, and
 have the brief tell it to start its own with `meridian work start`.

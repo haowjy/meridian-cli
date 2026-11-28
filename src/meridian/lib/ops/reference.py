@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Literal
 from uuid import UUID
 
+from meridian.lib.core.caller import same_runtime_root
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.harness.plugin_hosted import native_store
@@ -14,6 +16,7 @@ from meridian.lib.ops.reference_recovery import (
     RecoveryResult,
     recover_harness_session_id,
 )
+from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import session_identity, session_store, spawn_store
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn.model import SpawnRecord
@@ -249,11 +252,15 @@ def resolve_session_reference(
     *,
     runtime_root: Path | None = None,
     harness_hint: str | None = None,
+    launching: Literal["fork", "continue"] | None = None,
 ) -> ResolvedSessionReference:
     """Resolve a reference to the session to resume, with its source metadata.
 
     A spawn ref (or selector) resumes that spawn's continue chat; a chat ref or native
     ID resumes that chat. A native ID with no record resumes untracked.
+
+    ``launching`` names a command that creates or reopens state in the invoking project
+    and so can't take a source from another one.
     """
 
     harness_hint = _normalize_optional(harness_hint)
@@ -262,8 +269,13 @@ def resolve_session_reference(
         return _resolve_untracked_reference(project_root, located.native_id, harness_hint)
 
     root = located.runtime_root
+    own = runtime_root or resolve_runtime_root_for_read(project_root)
+    if launching is not None and (own is None or not same_runtime_root(root, own)):
+        raise ValueError(_other_project_message(ref, launching, located.project_root))
+    # Where the source's own project lives, for the paths its rows don't record.
+    source_project = located.project_root or project_root
     if isinstance(located, SpawnHit):
-        result = _resolve_spawn_reference(root, located.spawn, project_root)
+        result = _resolve_spawn_reference(root, located.spawn, source_project)
         if (
             result.missing_harness_session_id
             and _normalize_optional(result.harness_session_id) is None
@@ -283,9 +295,24 @@ def resolve_session_reference(
     return _reference_from_session(
         root,
         chat,
-        project_root,
+        source_project,
         _normalize_optional(chat.harness_session_id),
         spawn_id=str(owner) if owner is not None else None,
+    )
+
+
+def _other_project_message(
+    ref: str, launching: Literal["fork", "continue"], project_root: Path | None
+) -> str:
+    where = f"the project at {project_root}" if project_root is not None else "another project"
+    if launching == "fork":
+        return (
+            f"{ref} is in {where}. A fork copies the harness's own session, and harnesses "
+            "keep sessions per directory, so run the fork there"
+            + (f": meridian -C {project_root} ... --fork {ref}" if project_root else ".")
+        )
+    return f"{ref} is in {where}; a session is continued in its own project" + (
+        f" (-C {project_root})." if project_root else "."
     )
 
 

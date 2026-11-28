@@ -39,7 +39,7 @@ from meridian.lib.harness.codex_rollout import (
     materialize_fork_rollout,
     resolve_codex_home,
 )
-from meridian.lib.harness.codex_rules import ensure_codex_meridian_rules
+from meridian.lib.harness.codex_rules import codex_rules_files, ensure_codex_meridian_rules
 from meridian.lib.harness.codex_settings import codex_network_config_warnings
 from meridian.lib.harness.common import extract_codex_thread_id
 from meridian.lib.harness.connections.base import (
@@ -91,7 +91,6 @@ from meridian.lib.launch.launch_types import (
     ResolvedLaunchSpec,
     TerminalSurfaceMode,
 )
-from meridian.lib.safety.policy import CONSTRAINED_SANDBOX_MODES
 from meridian.lib.state.paths import LaunchPaths
 
 logger = logging.getLogger(__name__)
@@ -102,16 +101,14 @@ def materialize_codex_spec(
     env: Mapping[str, str],
     child_cwd: Path,
 ) -> ResolvedLaunchSpec:
-    """Project Meridian's execpolicy rule for a real constrained Codex launch."""
+    """Project Meridian's execpolicy rules for a real constrained Codex launch."""
 
-    if (
-        spec.permission_policy.sandbox not in CONSTRAINED_SANDBOX_MODES
-        or not spec.permission_policy.has_spawn_capability
-    ):
+    files = codex_rules_files(spec.permission_policy)
+    if not files:
         return spec
     return spec.model_copy(
         update={
-            "codex_runtime": ensure_codex_meridian_rules(env, child_cwd=child_cwd),
+            "codex_runtime": ensure_codex_meridian_rules(env, child_cwd=child_cwd, files=files),
         }
     )
 

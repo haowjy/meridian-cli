@@ -29,12 +29,13 @@ def resolve_cli_observer_context(*, observe: bool) -> "RuntimeContext":
     a same-project ``-C`` keeps it and may observe.
     """
 
+    from meridian.lib.core.caller import caller_identity
     from meridian.lib.core.context import RuntimeContext
-    from meridian.lib.core.types import SpawnId
 
-    observer = os.environ.get("MERIDIAN_SPAWN_ID", "").strip() if observe else ""
+    caller = caller_identity() if observe else None
     return RuntimeContext(
-        spawn_id=SpawnId(observer) if observer else None,
+        spawn_id=caller.spawn_id if caller else None,
+        runtime_root=caller.runtime_root if caller else None,
         chat_id=os.environ.get("MERIDIAN_CHAT_ID", "").strip(),
     )
 

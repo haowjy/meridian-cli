@@ -593,9 +593,12 @@ class SpawnListInput(BaseModel):
     profile: str | None = None
     primary: bool = False
     work: str | None = None
-    limit: int = 20
+    # ``None`` lists every row there is.
+    limit: int | None = 20
     failed: bool = False
     project_root: str | None = None
+    # Running sessions in every project on this machine.
+    all_projects: bool = False
 
 
 class SpawnChildrenInput(BaseModel):
@@ -726,6 +729,17 @@ class SpawnIdle(BaseModel):
     ttl_estimated: bool
 
 
+class SpawnLocation(BaseModel):
+    """Where a listed spawn lives, so a list merged from several projects or machines says
+    which each row is in. ``machine`` is ``None`` when this machine has no identity file."""
+
+    model_config = ConfigDict(frozen=True)
+
+    project_root: str | None
+    project_id: str | None
+    machine: str | None
+
+
 class SpawnListEntry(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -742,6 +756,7 @@ class SpawnListEntry(BaseModel):
     managed_backend: bool = False
     duration_secs: float | None
     cost_usd: float | None
+    located: SpawnLocation | None = None
 
     def display_status(self) -> str:
         shown = (self.status_display or "").strip()
@@ -787,6 +802,8 @@ class SpawnListOutput(BaseModel):
     total_count: int | None = None
     truncated: bool = False
     text_view: str = "list"
+    # A list that spans projects names each row's project.
+    show_project: bool = False
 
     @model_serializer(mode="plain")
     def _serialize(self) -> dict[str, object]:
@@ -809,6 +826,8 @@ class SpawnListOutput(BaseModel):
                 payload_entry["activity"] = entry.activity
             if entry.managed_backend:
                 payload_entry["managed_backend"] = True
+            if entry.located is not None:
+                payload_entry.update(entry.located.model_dump())
             serialized_spawns.append(payload_entry)
 
         payload: dict[str, object] = {
@@ -831,6 +850,12 @@ class SpawnListOutput(BaseModel):
 
             rows = [["spawn", "status", "model", "duration"]]
             rows.extend(entry.as_row() for entry in self.spawns)
+            if self.show_project:
+                rows[0].append("project")
+                for row, entry in zip(rows[1:], self.spawns, strict=True):
+                    located = entry.located
+                    where = (located.project_root or located.project_id) if located else None
+                    row.append(where or "-")
             result = tabular(rows)
         if self.truncated and self.total_count is not None:
             result += (

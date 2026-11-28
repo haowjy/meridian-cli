@@ -1,5 +1,219 @@
 # Upgrade notes
 
+## `meridian message` replaces `meridian spawn message`
+
+New in this release. `meridian message <address> "..."` sends to a running session by its
+spawn ID or chat ID, or to a person by `@name`. `meridian spawn message <ref> --message "..."`
+still works through 0.28.x through the same code, prints one line on stderr naming the new
+command, and is gone from `meridian spawn -h`. From 0.29.0 it fails with one line that names
+`meridian message`.
+
+- **`--json` works and has a shape.** One line on stdout for every outcome: `{"ok": true,
+  "delivery": ...}` or `{"ok": false, "error": {"kind": ..., "text": ...}}`, exit 0 exactly
+  when `ok` is true. Only the kind `maybe_delivered` means the message may have arrived, so a
+  script resends on any other kind. An error raised before the command runs prints the same
+  object with kind `usage`. Plain text output is unchanged.
+- **A new ID needs no `-C`.** `meridian message c20417 "..."` reaches the session from any
+  project, by spawn ID or chat ID; see [IDs are unique on the machine](#spawn-and-chat-ids-are-unique-on-the-machine).
+  A `--json` result also carries `machine`, this machine's name, and the address may be
+  written `<this machine's name>/<id>`; another saved machine's name sends it there (see
+  [Machines](#machines-can-reach-each-other-over-ssh)). Any other name fails as `not_found`
+  ("unknown machine"). An ID that names a session in
+  two projects fails as `ambiguous`; one issued before machine-wide IDs that is not in the
+  current project fails as `not_found`, with its text saying so.
+- **A message to a cold session is held.** A session that is idle with its prompt cache
+  expired (`idle.warm_until` in `spawn list --json` has passed) gets nothing: the command
+  exits 1 with kind `cold`, and the text gives the idle time, the model and the cost so far.
+  Waking it re-reads the whole conversation. Send again with `--wake` to deliver anyway, or
+  start a new session with `--from <session>`. This changes messages that are delivered
+  today, through `meridian spawn message` too. **`meridian-comms`' wake must pass
+  `--wake`.** A session that reports no idle state is delivered to as before, so the hold is
+  best effort. `--wake` with an `@` address is a `usage` error. Nothing was sent when the kind
+  is `cold`, so a script may send again.
+- **A text of `-` reads stdin.** Without it the text is the second argument, as before.
+- **`@person` addresses go to a program you name.** Set `[message] people = ["meridian-comms",
+  "deliver"]` in `~/.meridian/config.toml`. Meridian reads `[message]` from that file only: it
+  ignores it, with a warning, in a project's `meridian.toml`, `meridian.local.toml` or a file
+  named by `--config` or `MERIDIAN_CONFIG`. `@latest`, `@last-failed` and `@last-completed`
+  still fail. **After a rollback, remove `[message]`:** 0.27.11
+  doesn't know the table and prints `Ignoring unknown Meridian config key 'message'.` on
+  stderr, twice, on every command. Nothing else changes.
+- **Reply lines print `meridian message`, with `-C` after the address.** Every message a
+  session receives names this form, to receivers of every build. A session that a build before
+  0.28 started and that runs in a sandbox has no grant for it: it fails with kind `sandboxed`
+  and a text that says to restart the session, or to use `meridian spawn message` meanwhile.
+  Restart sandboxed sessions started before 0.28.
+- **Codex gets a second rules file**, `$CODEX_HOME/rules/meridian-message.rules`, beside the
+  unchanged `meridian.rules`, and a third for [the inbox](#the-machine-has-an-inbox). Each
+  build rewrites only the files it knows, so a 0.27 and a 0.28 process starting Codex
+  sessions never undo each other. Like the first, each applies to every Codex session of
+  the user.
+- **A session's control server says whether a refused message arrived.** Its failure reply
+  gains `kind`. A session that an older build started still answers without one, which
+  reads as `maybe_delivered` until the session restarts.
+
+## The machine has an inbox
+
+New in this release. `meridian message inbox "..."` leaves a message that names no session.
+It waits until someone runs `meridian inbox take` for it: you, or a primary session.
+Nothing takes a message automatically and no session is woken. A primary learns of a
+waiting message in two ways: a line in its prompt when it starts fresh, or an
+`inbox.received` hook row of yours that runs `meridian inbox offer`. See
+[The machine inbox](commands.md#the-machine-inbox).
+
+- **`inbox` is an address now.** Before this release it was not one, and failed.
+- **A new directory, `~/.meridian/machine/inbox/`,** holds the messages, claims and offers as
+  files, one inbox per machine. 0.27 never reads it, so after a rollback the messages stay
+  there, untaken, until you upgrade again.
+- **A primary's first prompt may gain one line**, such as "3 messages are waiting in this
+  machine's inbox", when messages of the last 7 days are waiting for its project or for
+  none.
+- **A new hook event, `inbox.received`,** fires when a message is filed. Meridian reads its
+  rows from the user config only (`~/.meridian/config.toml`, or the file `MERIDIAN_CONFIG`
+  names), and runs them with no project: see [Machine events](hooks.md#machine-events).
+  **After a rollback, remove those rows:** 0.27 doesn't know the event, and while one is in
+  the user config its `meridian hooks list`, `hooks check` and `hooks run` exit 1. Its other
+  commands drop the row with a warning and carry on.
+- **Hook commands now get `schema_version` 4 on stdin**, for every event. The fields of the
+  events 0.27 had are unchanged. `project_root` and `runtime_root` may now be `null`, and
+  are for `inbox.received`, which adds `inbox_message`. A hook that checks the version for
+  an exact 3 needs updating.
+- **Another machine's inbox is reached by its saved name.** Once `meridian machine add
+  <ssh target>` has saved a machine ([below](#machines-can-reach-each-other-over-ssh)),
+  `meridian message <machine>/inbox "..."` files there, and each `meridian inbox` command
+  takes `--machine <machine>`; see
+  [Another machine's inbox](commands.md#another-machines-inbox). Both
+  machines need this release: an older one refuses the call with a kind (`refused`,
+  `usage` or `version`) and nothing is changed there.
+- **A message and a claim record the machine's ID** as `machine_id`, beside its name, in
+  the files and in `--json`. The ID decides whose a claim is, so renaming a machine keeps
+  the messages a session on it already took.
+- **A primary session can run `meridian inbox` and `meridian message` from inside its
+  sandbox, whatever its profile.** Every primary is told of waiting messages and offers,
+  so every primary may take them; before, only a session launched with a profile that lists
+  subagents could, and a primary with no profile was blocked (or, in Claude's auto mode,
+  refused) from running the `meridian inbox take` its offer printed. A spawn still gets
+  them only when its profile may spawn, and `meridian spawn` stays behind that rule for
+  every session, except on Codex (next item).
+- **Codex gets a third rules file**, `$CODEX_HOME/rules/meridian-inbox.rules`. A sandboxed
+  Codex launch writes the rules files for the commands it was granted: a primary whose
+  profile may not spawn writes `meridian-message.rules` and `meridian-inbox.rules`, not
+  `meridian.rules`. Like the first, each applies to every Codex session of the user once
+  written, children included: after any sandboxed Codex primary has run, every Codex
+  session using that `$CODEX_HOME`, whatever its profile, runs `meridian message` and
+  `meridian inbox` outside its sandbox (and `meridian spawn`, once a spawn-capable launch
+  has run). A child is still refused `inbox take`, `release` and `offer` by the inbox's own
+  role check.
+
+## Machines can reach each other over SSH
+
+New in this release. `meridian machine add <ssh target>` saves another computer;
+`--machine <name>` or a `<name>/<id>` reference then runs `spawn list|show|status|children`,
+`spawn report show`, `session log|search` and `message` there. See
+[Machines](commands.md#machines).
+
+- **Plain SSH, your keys.** Meridian opens no port and stores no password or key. Every call
+  is a new `ssh -T` with `BatchMode`, so a host key must be known first: `machine add` is
+  where you accept it, in a terminal.
+- **The other machine needs this release.** `machine add` finds Meridian there (`command -v
+  meridian`, then `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `~/.cargo/bin`), and in a
+  terminal offers to install it with `uv`, or to upgrade an older one (default No: sessions
+  running there keep the old build until restarted, and a sandboxed one can't run `meridian
+  message` until it is). Without a terminal it prints the command and asks nothing.
+- **Names, not IDs, are what you type.** Rename this machine first if the default
+  (`<login>-<hostname>`) is not what you want: `meridian machine rename jimyao-homebox`.
+  Machines that saved it follow the rename on their next call; the machine's ID, in
+  `~/.meridian/machine.json`, never changes. If that file is deleted the machine gets a new ID
+  and peers refuse it until you `machine remove` and `machine add` it again. A later
+  Meridian may change the file's format: 0.28 then says it was written by a newer Meridian
+  and to upgrade, and a rename by 0.28 keeps the keys it doesn't know.
+- **Replies need the way back.** `machine add` offers to save this machine on the other one,
+  testing from there which target reaches it. A message to a machine that hasn't saved the
+  sender says so in its reply line.
+- **Claude may hold a message from another session.** A Claude session that bypasses
+  permission prompts may keep an incoming message for its human to approve, and show "Held
+  peer message … not delivered to Claude". The sender still sees `posted`. In testing, a
+  message from another machine was held on one machine and delivered at once on the other,
+  so expect either. To skip the prompt, set `"crossSessionInbound": "accept"` in
+  `~/.claude/settings.json` on the receiving machine; it then applies to every peer
+  message that session gets. See
+  [Claude's inbound gate](harness-integration.md#primary-message-delivery-and-claudes-inbound-gate).
+- **A sandboxed session reaches another machine with `meridian message` and `meridian
+  inbox`, and with `meridian spawn …` only if its profile may spawn.** A harness lets
+  `meridian message` and `meridian inbox` out of its sandbox for every primary session,
+  whatever its profile, and for a spawn whose profile lists subagents; it lets `meridian
+  spawn …` out only for a session launched with such a profile (`-a <profile>`), the rule
+  0.27 has for `meridian spawn message`. A spawn whose profile may not spawn runs all of
+  them inside the sandbox (on Codex, only until a rules file for them has been written:
+  those files apply to every Codex session of the user), and every session runs `meridian session …` and `meridian
+  machine …` there. There `ssh` is blocked: on Linux the call fails with kind
+  `sandboxed`; on macOS it keeps the kind `ssh` gave it (usually `unreachable`, with
+  `Operation not permitted`) and its text names the sandbox.
+- **`machine run` there reads the default `~/.meridian`.** An SSH command doesn't read a
+  `MERIDIAN_HOME` set in a shell profile; set it in `~/.ssh/environment` or link the
+  directory.
+- **Put `--machine` after the command words** (`meridian spawn list --machine NAME`): in
+  front, the command stays inside a harness sandbox.
+- `~/.meridian/machines.json` is read by 0.28 only. After a rollback, 0.27 ignores it.
+  Hand-edit it only with care: an entry that is wrong is skipped with a warning, a file that
+  is not JSON stops every call to another machine and is never overwritten.
+
+## Spawn and chat IDs are unique on the machine
+
+New in this release. Meridian now issues `pN` and `cN` from one list kept in
+`~/.meridian/machine/ids/` instead of one counter per project, so a new ID names the same
+session from any directory.
+
+- **A new ID needs no `-C`.** `meridian spawn show p21007`, `session log c20417`,
+  `spawn wait`, `spawn cancel` and the rest find the session's project themselves. `-C` still
+  works, and names the project where an ID is looked up only if that project holds the ID
+  itself.
+- **Old IDs count per project, as before.** An ID issued by an earlier build has no entry in
+  the list: it means something only inside its own project, and from another project you name
+  it with `-C`. Its "not found" says that it was issued before machine-wide IDs. The old
+  numbers are not renumbered, so `p41` can still exist in several projects.
+- **An ID held in two places is refused.** If a claimed ID is also a row of the project you
+  are in (an older build outran its room, below), the command stops and asks for `-C`
+  instead of acting on a session you may not mean.
+- **Across projects, commands are what `-C` made them.** Nothing is recorded for the caller in
+  another project: no observation, wait pin or owed result, because the caller's ID means
+  nothing there. `spawn --continue` and `meridian --continue` of a session in another project
+  re-run themselves under `-C <that project>`: the session continues in its own project with
+  no parent, and the depth guard still counts. `-C` naming another project is an error, and
+  so is a project directory that is gone. `--from` reads the source in its project and starts
+  in yours. `--fork` and `--fork-fresh` across projects are refused; run the fork there.
+  Hooks of the other project run without your session's chat, spawn and work variables.
+- **IDs jump.** The first new ID is above every ID your projects have used, rounded up to
+  the next thousand plus one thousand: on a machine whose highest spawn is `p19220` the next
+  one is `p21000`. IDs stop being consecutive within a project; they still rise with time.
+- **Restart sessions started before 0.28, and above all before 0.27.11.** A session still
+  running older code keeps allocating from its project's old counter, so its IDs are legacy
+  IDs: right inside the project, with no claim, so nothing outside it finds them. Until
+  those sessions end, a project's newest ID is not always its highest, and lists follow the
+  number. A session started before 0.27.11 also finds spawns by walking that counter, so
+  its `spawn list` can miss spawns that 0.28 started; `spawn show <id>` still works.
+- Each project's `spawn-id-counter` and `session-id-counter` stop moving. A project that
+  had spawns but no `spawn-id-counter` gets one.
+- Meridian creates a symlink per ID under `machine/ids/` and never deletes one, so the
+  directory grows with every spawn and chat.
+- **Rolling back works.** An older build carries on from each project's frozen counter
+  (and from the counter 0.28 writes into a project that had none), and it reads rows with
+  the new IDs: `spawn list`, `spawn show`, filters and `session log` on an existing chat.
+  Its IDs stay below the new range unless one process issues more IDs in a project than
+  the room left above that project's counter: at least 1,000 in any project, 1,779 in the
+  busiest on the machine this was tested on. A new ID is findable by bare ID only inside
+  its own project, as before, and the ordering caveat above applies until old sessions end.
+- **`meridian spawn list --global`** lists the running sessions of every project on the
+  machine, each with its `project_root`. `--all`, `--status`, `--view`, `--failed` and
+  `--work` are refused with it: history across projects is `session search --global`. It has
+  no default `--limit` (give one to cut it), and it reads only each project's running rows.
+- **`spawn list` and `--global` rows gain `project_root`, `project_id` and `machine`.** They are
+  additive JSON fields and are present without `--global`. `project_id` is the project's
+  committed ID (`[project] id` in `meridian.toml`); it is `null` for a directory with no
+  committed ID, whose state Meridian keys by its path on this machine. `machine` is this machine's name,
+  kept in `~/.meridian/machine.json`, which Meridian creates the first time it needs it; it is
+  `null` if the file can't be created.
+
 ## `meridian agy` prints an Antigravity launch
 
 New in this release; needs the Mars release that routes a `--harness agy` pin to `agy` (Mars

@@ -9,10 +9,11 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from meridian.cli import spawn_message as spawn_message_module
+from meridian.cli import message as message_module
 from meridian.lib.config.loader import load_config
 from meridian.lib.core.delivery import DeliveryError, DeliveryKind
 from meridian.lib.core.types import HarnessId, SpawnId
@@ -20,6 +21,8 @@ from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEv
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.request import SpawnRequest
+from meridian.lib.message.result import Delivered
+from meridian.lib.ops import locate as locate_module
 from meridian.lib.ops.runtime import (
     build_runtime_from_root_and_config,
     resolve_runtime_authority_for_write,
@@ -108,7 +111,6 @@ def _configure_pi_runtime(
 async def test_immediate_background_inject_waits_for_real_control_endpoint(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     runtime_root = Path(tempfile.mkdtemp(prefix="meridian-inject-", dir="/tmp"))
     received_messages: list[str] = []
@@ -208,13 +210,14 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
         start_connection=_delayed_background_start,
     )
     monkeypatch.setattr(
-        spawn_message_module,
-        "resolve_runtime_root_and_config",
-        lambda _root: (project_root, object()),
+        message_module,
+        "resolve_project_authority",
+        lambda: SimpleNamespace(project_root=project_root),
     )
+    monkeypatch.setattr(message_module, "resolve_runtime_root_for_read", lambda _root: control_root)
     monkeypatch.setattr(
-        spawn_message_module,
-        "resolve_runtime_root",
+        locate_module,
+        "resolve_runtime_root_for_read",
         lambda _root: control_root,
     )
 
@@ -235,8 +238,8 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
     )
 
     try:
-        await asyncio.wait_for(
-            spawn_message_module.send_message(str(spawn_id), "SECOND"),
+        sent = await asyncio.wait_for(
+            message_module.send_message(str(spawn_id), "SECOND"),
             timeout=10.0,
         )
         await asyncio.wait_for(launch_task, timeout=5.0)
@@ -247,7 +250,8 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
 
         assert outcome is not None
         assert outcome.status == "succeeded"
-        assert "Message delivered" in capsys.readouterr().out
+        assert isinstance(sent, Delivered)
+        assert sent.delivery == "acknowledged"
         assert received_messages == [
             "[Meridian] Message with no sender identity; it has no reply address.\n\nSECOND"
         ]

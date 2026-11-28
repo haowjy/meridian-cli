@@ -9,6 +9,7 @@ from meridian.cli.startup.policy import (
     BootstrapPlan,
     RootSource,
     StartupClass,
+    StartupErrorShape,
     StateRequirement,
     TelemetryMode,
 )
@@ -25,6 +26,13 @@ class CommandDescriptor:
     telemetry_mode: TelemetryMode
     default_output_mode: str
     root_source: RootSource = RootSource.CWD
+    startup_error: StartupErrorShape = StartupErrorShape.LEGACY
+    # May run on another machine (``--machine``, ``<machine>/<id>``, ``<machine>/inbox``):
+    # the reads, ``message`` (which delivers to a session or files in the inbox) and the
+    # five ``inbox`` commands, of which ``take``, ``release`` and ``offer`` change the inbox.
+    # Nothing that starts, stops or edits a session crosses. ``machine run`` reads this on
+    # arrival too.
+    crosses: bool = False
 
 
 class CommandCatalog:
@@ -76,6 +84,8 @@ def _descriptor(
     summary: str,
     *,
     root_source: RootSource = RootSource.CWD,
+    startup_error: StartupErrorShape = StartupErrorShape.LEGACY,
+    crosses: bool = False,
 ) -> CommandDescriptor:
     bootstrap_plan = BootstrapPlan(
         StateRequirement.NONE if root_source == RootSource.ARGV else state_requirement
@@ -88,6 +98,8 @@ def _descriptor(
         telemetry_mode=telemetry_mode,
         default_output_mode=default_output_mode,
         root_source=root_source,
+        startup_error=startup_error,
+        crosses=crosses,
     )
 
 
@@ -108,6 +120,8 @@ def _read_rootless(
     *,
     startup_class: StartupClass = StartupClass.READ_ROOTLESS,
     default_output_mode: str = "text",
+    startup_error: StartupErrorShape = StartupErrorShape.LEGACY,
+    crosses: bool = False,
 ) -> CommandDescriptor:
     """Path- or user-level read commands that do not require a Meridian project."""
 
@@ -118,6 +132,8 @@ def _read_rootless(
         TelemetryMode.NONE,
         default_output_mode,
         summary,
+        startup_error=startup_error,
+        crosses=crosses,
     )
 
 
@@ -126,6 +142,8 @@ def _write_rootless(
     summary: str,
     *,
     default_output_mode: str = "text",
+    startup_error: StartupErrorShape = StartupErrorShape.LEGACY,
+    crosses: bool = False,
 ) -> CommandDescriptor:
     """Path- or user-level write commands that do not require a Meridian project."""
 
@@ -136,6 +154,8 @@ def _write_rootless(
         TelemetryMode.NONE,
         default_output_mode,
         summary,
+        startup_error=startup_error,
+        crosses=crosses,
     )
 
 
@@ -174,6 +194,8 @@ def _read_runtime(
     summary: str,
     *,
     default_output_mode: str = "text",
+    startup_error: StartupErrorShape = StartupErrorShape.LEGACY,
+    crosses: bool = False,
 ) -> CommandDescriptor:
     return _descriptor(
         path,
@@ -182,6 +204,8 @@ def _read_runtime(
         TelemetryMode.NONE,
         default_output_mode,
         summary,
+        startup_error=startup_error,
+        crosses=crosses,
     )
 
 
@@ -190,6 +214,8 @@ def _write_runtime(
     summary: str,
     *,
     default_output_mode: str = "text",
+    startup_error: StartupErrorShape = StartupErrorShape.LEGACY,
+    crosses: bool = False,
 ) -> CommandDescriptor:
     return _descriptor(
         path,
@@ -198,6 +224,8 @@ def _write_runtime(
         TelemetryMode.SEGMENT,
         default_output_mode,
         summary,
+        startup_error=startup_error,
+        crosses=crosses,
     )
 
 
@@ -279,16 +307,19 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         ("spawn", "list"),
         "List spawns.",
         default_output_mode="text",
+        crosses=True,
     ),
     _read_runtime(
         ("spawn", "show"),
         "Show spawn details.",
         default_output_mode="text",
+        crosses=True,
     ),
     _read_runtime(
         ("spawn", "status"),
         "Show spawn status details without report body by default.",
         default_output_mode="text",
+        crosses=True,
     ),
     _read_runtime(
         ("spawn", "wait"),
@@ -317,22 +348,23 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     ),
     _write_runtime(("spawn", "done"), "Confirm that a held child spawn is finished."),
     _write_runtime(("spawn", "rearm"), "Stay open: the next check comes after going idle."),
-    _write_runtime(
+    _read_runtime(
         ("spawn", "message"),
-        "Send a message to a running spawn.",
-        default_output_mode="text",
+        "Deprecated: use `meridian message`.",
+        startup_error=StartupErrorShape.MESSAGE,
     ),
     _read_runtime(
         ("spawn", "children"),
         "List child spawns.",
         default_output_mode="text",
+        crosses=True,
     ),
     _read_runtime(
         ("spawn", "subagents"),
         "List the agents to delegate to; `--all` for every installed agent.",
     ),
     _read_runtime(("spawn", "stats"), "Show spawn stats."),
-    _read_runtime(("spawn", "report", "show"), "Show a spawn report."),
+    _read_runtime(("spawn", "report", "show"), "Show a spawn report.", crosses=True),
     _read_runtime(
         ("spawn", "report", "search"),
         "Search spawn reports.",
@@ -341,9 +373,9 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         ("session", "browse"),
         "Browse recent sessions; resume stopped or fork live ones.",
     ),
-    _read_runtime(("session", "log"), "Show session log."),
+    _read_runtime(("session", "log"), "Show session log.", crosses=True),
     _read_runtime(("session", "export"), "Export session log."),
-    _read_runtime(("session", "search"), "Search session logs."),
+    _read_runtime(("session", "search"), "Search session logs.", crosses=True),
     _write_runtime(
         ("session", "repair"),
         "Repair stored session metadata from explicit harness-session detection.",
@@ -455,19 +487,101 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _write_rootless(("artifact", "stop"), "Stop an artifact serve."),
     _write_rootless(("artifact", "gc"), "Garbage-collect expired artifact serves."),
     _write_rootless(("notify",), "Send a notification through its hook routes."),
-    _read_rootless(("idle",), "Manage harness idle schedules.", default_output_mode="json"),
-    _read_rootless(("idle", "config"), "Resolve idle policy.", default_output_mode="json"),
-    _write_rootless(("idle", "arm"), "Arm an idle schedule.", default_output_mode="json"),
-    _write_rootless(("idle", "return"), "Close an idle stretch.", default_output_mode="json"),
+    _read_runtime(
+        ("message",),
+        "Send a message to a running session or a person.",
+        startup_error=StartupErrorShape.MESSAGE,
+        crosses=True,
+    ),
+    _read_rootless(("inbox",), "Show inbox help.", startup_error=StartupErrorShape.MESSAGE),
+    _read_rootless(
+        ("inbox", "list"),
+        "List the machine inbox's waiting messages.",
+        startup_error=StartupErrorShape.MESSAGE,
+        crosses=True,
+    ),
+    _read_rootless(
+        ("inbox", "read"),
+        "Print one inbox message.",
+        startup_error=StartupErrorShape.MESSAGE,
+        crosses=True,
+    ),
+    _write_rootless(
+        ("inbox", "take"),
+        "Claim an inbox message.",
+        startup_error=StartupErrorShape.MESSAGE,
+        crosses=True,
+    ),
+    _write_rootless(
+        ("inbox", "release"),
+        "Give an inbox claim back.",
+        startup_error=StartupErrorShape.MESSAGE,
+        crosses=True,
+    ),
+    _write_rootless(
+        ("inbox", "offer"),
+        "Tell a running session an inbox message looks like its own.",
+        startup_error=StartupErrorShape.MESSAGE,
+        crosses=True,
+    ),
+    _read_rootless(("machine",), "Machines this one can reach."),
+    _write_rootless(("machine", "add"), "Save a machine."),
+    _read_rootless(("machine", "list"), "List saved machines.", crosses=True),
+    _write_rootless(("machine", "remove"), "Forget a saved machine."),
+    _read_rootless(("machine", "status"), "Call each saved machine and report its state."),
+    _read_rootless(("machine", "name"), "Print this machine's name.", crosses=True),
+    _write_rootless(("machine", "rename"), "Rename this machine."),
+    _read_rootless(("machine", "run"), "Receive a call from another machine."),
+    _read_rootless(
+        ("idle",),
+        "Manage harness idle schedules.",
+        default_output_mode="json",
+        startup_error=StartupErrorShape.IDLE,
+    ),
+    _read_rootless(
+        ("idle", "config"),
+        "Resolve idle policy.",
+        default_output_mode="json",
+        startup_error=StartupErrorShape.IDLE,
+    ),
+    _write_rootless(
+        ("idle", "arm"),
+        "Arm an idle schedule.",
+        default_output_mode="json",
+        startup_error=StartupErrorShape.IDLE,
+    ),
+    _write_rootless(
+        ("idle", "return"),
+        "Close an idle stretch.",
+        default_output_mode="json",
+        startup_error=StartupErrorShape.IDLE,
+    ),
     _write_rootless(
         ("idle", "needs-permission"),
         "Forward a waiting permission prompt.",
         default_output_mode="json",
+        startup_error=StartupErrorShape.IDLE,
     ),
-    _write_rootless(("idle", "fire"), "Claim an idle stage.", default_output_mode="json"),
-    _write_rootless(("idle", "event"), "Handle a harness idle event.", default_output_mode="json"),
-    _read_rootless(("idle", "status"), "Show open idle stretches."),
-    _read_rootless(("idle", "mod-path"), "Print the bundled Claude idle mod path."),
+    _write_rootless(
+        ("idle", "fire"),
+        "Claim an idle stage.",
+        default_output_mode="json",
+        startup_error=StartupErrorShape.IDLE,
+    ),
+    _write_rootless(
+        ("idle", "event"),
+        "Handle a harness idle event.",
+        default_output_mode="json",
+        startup_error=StartupErrorShape.IDLE,
+    ),
+    _read_rootless(
+        ("idle", "status"), "Show open idle stretches.", startup_error=StartupErrorShape.IDLE
+    ),
+    _read_rootless(
+        ("idle", "mod-path"),
+        "Print the bundled Claude idle mod path.",
+        startup_error=StartupErrorShape.IDLE,
+    ),
     _read_rootless(("qi",), "Show inline knowledge for current path."),
     _read_rootless(("qi", "list"), "List all inline knowledge locations."),
     _read_rootless(("qi", "check"), "Check inline knowledge health."),
