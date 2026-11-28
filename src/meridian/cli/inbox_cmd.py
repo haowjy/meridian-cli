@@ -410,9 +410,10 @@ def cmd_inbox_offer(
 
     Refuses a message that is taken, a session that isn't a primary (only a primary can
     take), one that isn't running or whose prompt cache has gone cold, and one in another
-    project than the message's. The session claims the message itself; repeating the
-    offer sends the notice again. `--machine` names the machine that holds the message; the
-    session may be on another one only when the command runs where the message is.
+    project than the message's. The notice names the commands to read and to claim the
+    message, and the session runs them itself; repeating the offer sends the notice again.
+    `--machine` names the machine that holds the message; the session may be on another one
+    only when the command runs where the message is.
     """
 
     from meridian.cli.message import send_message
