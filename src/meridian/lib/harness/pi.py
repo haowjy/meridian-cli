@@ -30,6 +30,7 @@ from meridian.lib.harness.adapter import (
     NativeRelocationResult,
     RecordConfigDirFn,
     SpawnParams,
+    TranscriptView,
 )
 from meridian.lib.harness.adapter_base import BaseHarnessAdapter
 from meridian.lib.harness.bundle import (
@@ -47,6 +48,7 @@ from meridian.lib.harness.model_observation import iter_json_objects, nested_str
 from meridian.lib.harness.pi_boundary import read_boundary
 from meridian.lib.harness.pi_identity import mint_session_id, resolve_session_file, verify_identity
 from meridian.lib.harness.pi_idle import detect_ttl
+from meridian.lib.harness.pi_journal import project_pi_reopen_default
 from meridian.lib.harness.pi_lifecycle_events import (
     PI_PHASE_EVENT_TYPE,
     redact_pi_command_for_history,
@@ -318,6 +320,9 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def capture_observer(self, *, session_id: str, dialect: str) -> CaptureObserver:
         _ = dialect
         return PiObserver(session_id)
+
+    def reopen_projector(self) -> Callable[[str], TranscriptView] | None:
+        return project_pi_reopen_default
 
     def resolve_native_session_file(self, *, session_id: str, native_store: Path) -> Path | None:
         return resolve_session_file(native_store, session_id, pending=True)

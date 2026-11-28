@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Generic, Literal, final
 
@@ -32,9 +33,11 @@ from meridian.lib.harness.adapter import (
     RecordConfigDirFn,
     RunPromptPolicy,
     SpawnParams,
+    TranscriptView,
 )
 from meridian.lib.harness.connections.base import RawHarnessEvent, ServerRequestHandler
 from meridian.lib.harness.launch_types import SessionSeed
+from meridian.lib.harness.native_witness import Witness
 from meridian.lib.launch.composition import (
     ComposedLaunchContent,
     ProjectedContent,
@@ -53,8 +56,23 @@ if TYPE_CHECKING:
 class BaseNativeStoreReader:
     """Defaults for a ``NativeStoreReader``: a JSONL file, shape-based parsing, no capture."""
 
-    def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]:
+    native_store_shared: ClassVar[bool] = False
+
+    def native_transcript_kind(self, path: Path) -> Literal["native_file", "native_db"]:
         return "native_file"
+
+    def session_witnesses(
+        self, native_store: Path, session_ids: Iterable[str]
+    ) -> Mapping[str, Witness]:
+        raise NotImplementedError(f"{type(self).__name__} keeps no shared native store")
+
+    def open_session_snapshot(
+        self, path: Path, session_id: str
+    ) -> AbstractContextManager[tuple[Witness, Iterator[dict[str, object]]]]:
+        raise NotImplementedError(f"{type(self).__name__} reads no native database")
+
+    def reopen_projector(self) -> Callable[[str], TranscriptView] | None:
+        return None
 
     def transcript_parser(self) -> TranscriptEventParser:
         from meridian.lib.harness.transcript import DefaultTranscriptEventParser

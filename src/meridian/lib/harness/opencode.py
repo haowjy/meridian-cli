@@ -7,7 +7,8 @@ The Meridian adapter targets current opencode.ai CLI releases.
 import logging
 import re
 import sqlite3
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import ClassVar, Literal, cast
 
@@ -52,6 +53,7 @@ from meridian.lib.harness.connections.opencode_connection import OpenCodeConnect
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview, SessionSeed
 from meridian.lib.harness.legacy_native_stores import opencode_session_evidence
+from meridian.lib.harness.native_witness import Witness
 from meridian.lib.harness.opencode_backend import (
     OPENCODE_VERSION_ENV,
     bound_opencode_version,
@@ -67,7 +69,11 @@ from meridian.lib.harness.opencode_relocate import (
     plan_opencode_relocate,
 )
 from meridian.lib.harness.opencode_report import extract_opencode_session_id
-from meridian.lib.harness.opencode_snapshot import opencode_turn_since
+from meridian.lib.harness.opencode_snapshot import (
+    opencode_session_witnesses,
+    opencode_turn_since,
+    read_opencode_snapshot,
+)
 from meridian.lib.harness.opencode_storage import (
     resolve_opencode_home_dir,
     resolve_opencode_storage_root,
@@ -527,7 +533,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return SessionSeed(session_id=normalized_harness_session_id)
 
     def capture_dialect(self, *, kind: str, path: Path | None) -> str | None:
-        if kind == "opencode_db" and _opencode_db_is_v2(path):
+        if kind == "native_db" and _opencode_db_is_v2(path):
             return _OPENCODE_V2_DIALECT
         return "opencode.transcript.v1"
 
@@ -535,8 +541,20 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         _ = session_id
         return OpenCodeV2Observer() if dialect == _OPENCODE_V2_DIALECT else OpenCodeObserver()
 
-    def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]:
-        return "opencode_db" if detect_opencode_db_schema(path) is not None else "native_file"
+    native_store_shared: ClassVar[bool] = True
+
+    def native_transcript_kind(self, path: Path) -> Literal["native_file", "native_db"]:
+        return "native_db" if detect_opencode_db_schema(path) is not None else "native_file"
+
+    def session_witnesses(
+        self, native_store: Path, session_ids: Iterable[str]
+    ) -> Mapping[str, Witness]:
+        return opencode_session_witnesses(native_store, session_ids)
+
+    def open_session_snapshot(
+        self, path: Path, session_id: str
+    ) -> AbstractContextManager[tuple[Witness, Iterator[dict[str, object]]]]:
+        return read_opencode_snapshot(path, session_id)
 
     def turn_since(self, key: NativeKey, *, started_at_epoch: float) -> bool | None:
         store = Path(key.native_store)

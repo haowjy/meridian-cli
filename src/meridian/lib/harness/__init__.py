@@ -59,9 +59,13 @@ HARNESS_EXTENSION_TOUCHPOINTS: tuple[str, ...] = (
         "output path; add one when the harness's spec takes them)"
     ),
     (
-        "src/meridian/lib/ops/session_repair.py::_candidate_dirs() and "
-        "ops/session_search_index.py (optional: candidate listing without --native, and a "
-        "store shared by many sessions, as OpenCode's database is)"
+        "src/meridian/lib/ops/session_repair.py::_candidate_dirs() "
+        "(optional: candidate listing without --native)"
+    ),
+    (
+        "adapter native_store_shared, session_witnesses() and open_session_snapshot() "
+        "(a store shared by many sessions, as OpenCode's database is), and "
+        "reopen_projector() (a reopened view that differs from the stored events, as Pi's)"
     ),
     (
         "src/meridian/lib/harness/adapter_base.py::create_session_before_exec() "

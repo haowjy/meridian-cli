@@ -6,10 +6,10 @@ import json
 import sqlite3
 from collections.abc import Generator, Iterable, Iterator
 from contextlib import closing, contextmanager
+from dataclasses import astuple, dataclass
 from pathlib import Path
 
 from meridian.lib.core.native_identity import NativeKey
-from meridian.lib.harness.native_witness import OpenCodeV1Witness, OpenCodeV2Witness
 from meridian.lib.harness.opencode_transcript import (
     connect_readonly,
     db_schema,
@@ -18,6 +18,41 @@ from meridian.lib.harness.opencode_transcript import (
     iter_v2_session_events,
     v2_message_event,
 )
+
+
+@dataclass(frozen=True)
+class OpenCodeV1Witness:
+    part_count: int
+    part_updated_ms: int | None
+    message_count: int
+    message_updated_ms: int | None
+    session_updated_ms: int
+
+    def encode(self) -> str:
+        return json.dumps(("opencode-v1", astuple(self)), separators=(",", ":"))
+
+    @property
+    def activity_ns(self) -> int:
+        return (
+            max(self.session_updated_ms, self.message_updated_ms or 0, self.part_updated_ms or 0)
+            * 1_000_000
+        )
+
+
+@dataclass(frozen=True)
+class OpenCodeV2Witness:
+    message_count: int
+    max_seq: int | None
+    message_updated_ms: int | None
+    session_updated_ms: int
+
+    def encode(self) -> str:
+        return json.dumps(("opencode-v2", astuple(self)), separators=(",", ":"))
+
+    @property
+    def activity_ns(self) -> int:
+        return max(self.session_updated_ms, self.message_updated_ms or 0) * 1_000_000
+
 
 OpenCodeWitness = OpenCodeV1Witness | OpenCodeV2Witness
 

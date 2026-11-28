@@ -10,8 +10,6 @@ from uuid import UUID
 
 from meridian.lib.core.command_strings import format_command_for_display
 from meridian.lib.harness.native_witness import Witness, file_witness
-from meridian.lib.harness.opencode_snapshot import read_opencode_snapshot
-from meridian.lib.harness.pi_journal import project_pi_reopen_default
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.transcript import (
     INJECTED_ROLE,
@@ -400,21 +398,25 @@ def read_native_source(
     Retained snapshots stream through the same codec and render as captured.
     """
 
+    reader = get_default_harness_registry().find_reader(source.harness)
+
     def events() -> Generator[dict[str, object]]:
         validation = read.validation
         try:
             if budget and not budget.current():
                 return
-            if source.kind == "opencode_db":
-                with read_opencode_snapshot(source.path, source.session_id) as (w, raw):
+            if source.kind == "native_db":
+                assert reader is not None
+                with reader.open_session_snapshot(source.path, source.session_id) as (w, raw):
                     read.witness = w
                     yield from budget.events(raw) if budget else raw
                 validation.state, validation.reason = "complete", None
                 return
             read.witness = file_witness(source.path)
             raw = _source_events(source, validation, budget)
+            project = reader.reopen_projector() if reader else None
             try:
-                if source.harness == "pi":
+                if project is not None:
                     if source.kind == "native_file" and not is_native_snapshot(source.path):
                         data = source.path.read_bytes()
                         if budget:
@@ -425,7 +427,7 @@ def read_native_source(
                         text = "".join(json.dumps(event) + "\n" for event in raw)
                     if budget and not budget.current():
                         return
-                    projection = project_pi_reopen_default(text)
+                    projection = project(text)
                     read.view_basis, read.reasons = projection.view_basis, projection.reasons
                     yield from (
                         budget.events(iter(projection.events)) if budget else projection.events

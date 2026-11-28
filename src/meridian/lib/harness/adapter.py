@@ -6,7 +6,8 @@ defaults adapters build on are in ``adapter_base``.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -45,6 +46,7 @@ from meridian.lib.harness.connections.base import (
     ServerRequestHandler,
 )
 from meridian.lib.harness.launch_types import SessionSeed
+from meridian.lib.harness.native_witness import Witness
 from meridian.lib.launch.composition import (
     ComposedLaunchContent,
     ProjectedContent,
@@ -398,6 +400,21 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
     ) -> tuple[CompositionWarning, ...]: ...
 
 
+class TranscriptView(Protocol):
+    """The events a harness reopens a session with, when that differs from the stored order."""
+
+    @property
+    def events(self) -> Sequence[dict[str, object]]: ...
+
+    @property
+    def view_basis(self) -> Literal["reopen-default"]: ...
+
+    @property
+    def reasons(self) -> tuple[str, ...]:
+        """Why the source may be incomplete; empty when it is not."""
+        ...
+
+
 @runtime_checkable
 class NativeStoreReader(Protocol):
     """Reading a harness's native sessions: the part of an adapter that needs no launch.
@@ -406,7 +423,33 @@ class NativeStoreReader(Protocol):
     register just this, so ``session log``, search and ``--from`` need no special case.
     """
 
-    def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]: ...
+    # Sessions live together in one store (OpenCode's database), so search checks their
+    # freshness with one ``session_witnesses`` call per store instead of a file stat each.
+    native_store_shared: ClassVar[bool]
+
+    def native_transcript_kind(self, path: Path) -> Literal["native_file", "native_db"]:
+        """``native_db`` when ``path`` is a store shared by many sessions, read through
+        ``open_session_snapshot``; ``native_file`` when it holds one session's events."""
+        ...
+
+    def session_witnesses(
+        self, native_store: Path, session_ids: Iterable[str]
+    ) -> Mapping[str, Witness]:
+        """The freshness of each listed session found in a shared store; only asked when
+        ``native_store_shared``."""
+        ...
+
+    def open_session_snapshot(
+        self, path: Path, session_id: str
+    ) -> AbstractContextManager[tuple[Witness, Iterator[dict[str, object]]]]:
+        """One session's witness and raw events from a ``native_db`` source, read in one
+        snapshot; raises ``ValueError`` when the session is not there."""
+        ...
+
+    def reopen_projector(self) -> Callable[[str], TranscriptView] | None:
+        """What turns a whole stored transcript into the view the harness reopens it with;
+        None when the stored events, in order, are that view."""
+        ...
 
     def transcript_parser(self) -> TranscriptEventParser:
         """Turn this harness's native transcript events into messages for ``session log``."""

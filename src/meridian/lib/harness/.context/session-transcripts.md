@@ -29,7 +29,12 @@ changes are typed annotations in append order, not reconstructed active context.
 Unknown material records/content set `rendering_reason`; consumers must not call
 that a complete empty rendering. Raw storage remains unchanged.
 
-OpenCode session existence and the complete row read share one read-only
+`ops/session_transcript.py` and `ops/session_search_index.py` reach these readers only
+through the adapter: a `native_db` source (a store shared by many sessions) opens with
+`open_session_snapshot`, search checks a shared store's freshness with one
+`session_witnesses` call (`native_store_shared`), and `reopen_projector` gives the view a
+harness reopens its transcript with (Pi's persisted branch); `native_witness.Witness` is the
+shared freshness type. OpenCode session existence and the complete row read share one read-only
 transaction. Missing sources and database errors must not become empty iteration;
 a present DB session wins over legacy JSON even when empty.
 
