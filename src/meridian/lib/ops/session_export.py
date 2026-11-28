@@ -13,7 +13,6 @@ from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.transcript import TranscriptMessage
 from meridian.lib.ops.locate import ChatHit, Located, SpawnHit, locate
-from meridian.lib.ops.runtime import async_from_sync
 from meridian.lib.ops.session_transcript import read_session_transcript
 from meridian.lib.state import session_identity
 from meridian.lib.state.history_index import indexed_spawn_scan
@@ -349,12 +348,8 @@ def session_export_sync(
     return SessionExportOutput(session_id=transcript.target.source.session_id, markdown=markdown)
 
 
-session_export = async_from_sync(session_export_sync)
-
-
 __all__ = [
     "SessionExportInput",
     "SessionExportOutput",
-    "session_export",
     "session_export_sync",
 ]

@@ -331,7 +331,7 @@ def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
     import subprocess
 
     from meridian.lib.ops.reference import ResolvedSessionReference
-    from meridian.lib.ops.spawn.api import _build_fork_create_input
+    from meridian.lib.ops.spawn.follow_up import _build_fork_create_input
     from meridian.lib.ops.spawn.models import SpawnForkInput
 
     monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)

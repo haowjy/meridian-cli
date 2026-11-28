@@ -7,14 +7,6 @@ from collections.abc import Iterable
 from meridian.lib.extensions.declaration import OpDeclaration
 from meridian.lib.extensions.types import ExtensionCommandSpec, ExtensionSurface
 
-# Both expose the registration metadata (fqid, summary, cli_group, cli_name, surfaces,
-# first_party); only a resolved spec carries handlers and schemas.
-type CommandEntry = ExtensionCommandSpec | OpDeclaration
-
-
-def _resolved(entry: CommandEntry) -> ExtensionCommandSpec:
-    return entry.resolved if isinstance(entry, OpDeclaration) else entry
-
 
 class ExtensionCommandRegistry:
     """Registry of extension commands with validation.
@@ -24,51 +16,44 @@ class ExtensionCommandRegistry:
     """
 
     def __init__(self) -> None:
-        self._commands: dict[str, CommandEntry] = {}
+        self._commands: dict[str, OpDeclaration] = {}
         self._cli_commands: dict[tuple[str, str], str] = {}  # (group, name) -> fqid
 
-    def register(self, spec: CommandEntry) -> None:
+    def register(self, declaration: OpDeclaration) -> None:
 
-        fqid = spec.fqid
+        fqid = declaration.fqid
         if fqid in self._commands:
             raise ValueError(f"Duplicate extension command: {fqid}")
 
         cli_key: tuple[str, str] | None = None
-        if spec.cli_group is not None and spec.cli_name is not None:
-            cli_key = (spec.cli_group, spec.cli_name)
+        if declaration.cli_group is not None and declaration.cli_name is not None:
+            cli_key = (declaration.cli_group, declaration.cli_name)
             if cli_key in self._cli_commands:
                 raise ValueError(
-                    f"Duplicate CLI command '{spec.cli_group}.{spec.cli_name}': "
+                    f"Duplicate CLI command '{declaration.cli_group}.{declaration.cli_name}': "
                     f"{fqid} conflicts with {self._cli_commands[cli_key]}"
                 )
 
-        if not spec.first_party:
-            forbidden_surfaces = {ExtensionSurface.CLI, ExtensionSurface.MCP}
-            if spec.surfaces & forbidden_surfaces:
-                raise ValueError(
-                    f"Non-first-party command {fqid} cannot expose CLI or MCP surfaces",
-                )
-
-        self._commands[fqid] = spec
+        self._commands[fqid] = declaration
         if cli_key is not None:
             self._cli_commands[cli_key] = fqid
 
     def get(self, fqid: str) -> ExtensionCommandSpec | None:
-        entry = self._commands.get(fqid)
-        return _resolved(entry) if entry is not None else None
+        declaration = self._commands.get(fqid)
+        return declaration.resolved if declaration is not None else None
 
-    def list_for_cli_group(self, group: str) -> list[CommandEntry]:
+    def list_for_cli_group(self, group: str) -> list[OpDeclaration]:
         return sorted(
-            (s for s in self._commands.values() if s.cli_group == group),
-            key=lambda s: s.cli_name or "",
+            (d for d in self._commands.values() if d.cli_group == group),
+            key=lambda d: d.cli_name or "",
         )
 
     def list_all(self) -> list[ExtensionCommandSpec]:
-        return [_resolved(entry) for entry in self._commands.values()]
+        return [declaration.resolved for declaration in self._commands.values()]
 
     def list_for_surface(self, surface: ExtensionSurface) -> list[ExtensionCommandSpec]:
 
-        return [_resolved(e) for e in self._commands.values() if surface in e.surfaces]
+        return [d.resolved for d in self._commands.values() if surface in d.surfaces]
 
     def __len__(self) -> int:
         return len(self._commands)
@@ -77,24 +62,21 @@ class ExtensionCommandRegistry:
         return iter(self.list_all())
 
 
-_first_party_registry: ExtensionCommandRegistry | None = None
+_command_registry: ExtensionCommandRegistry | None = None
 
 
-def get_first_party_registry() -> ExtensionCommandRegistry:
+def get_command_registry() -> ExtensionCommandRegistry:
+    """Return the process-wide registry of every operation in ``ops/commands.py``."""
 
-    global _first_party_registry
-    if _first_party_registry is None:
-        _first_party_registry = build_first_party_registry()
-    return _first_party_registry
+    global _command_registry
+    if _command_registry is None:
+        from meridian.lib.ops.commands import OP_DECLARATIONS
 
-
-def build_first_party_registry() -> ExtensionCommandRegistry:
-
-    from meridian.lib.extensions.first_party import register_first_party_commands
-
-    registry = ExtensionCommandRegistry()
-    register_first_party_commands(registry)
-    return registry
+        registry = ExtensionCommandRegistry()
+        for declaration in OP_DECLARATIONS:
+            registry.register(declaration)
+        _command_registry = registry
+    return _command_registry
 
 
 def compute_manifest_hash(registry: ExtensionCommandRegistry) -> str:
@@ -110,7 +92,8 @@ def compute_manifest_hash(registry: ExtensionCommandRegistry) -> str:
             "fqid": spec.fqid,
             "summary": spec.summary,
             "surfaces": sorted(surface.value for surface in spec.surfaces),
-            "first_party": spec.first_party,
+            # Every command is first-party; the key stays so the published hash is unchanged.
+            "first_party": True,
             "required_capabilities": sorted(spec.required_capabilities),
             "args_schema": spec.args_schema.model_json_schema(),
             "result_schema": spec.result_schema.model_json_schema(),
@@ -122,9 +105,7 @@ def compute_manifest_hash(registry: ExtensionCommandRegistry) -> str:
 
 
 __all__ = [
-    "CommandEntry",
     "ExtensionCommandRegistry",
-    "build_first_party_registry",
     "compute_manifest_hash",
-    "get_first_party_registry",
+    "get_command_registry",
 ]

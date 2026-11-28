@@ -7,7 +7,7 @@ from cyclopts import App, Parameter
 
 from meridian.cli.ext_registration import register_extension_cli_group
 from meridian.cli.invocation import Emitter, emit
-from meridian.lib.extensions.registry import get_first_party_registry
+from meridian.lib.extensions.registry import get_command_registry
 from meridian.lib.ops.diag import DoctorInput, doctor_sync
 
 
@@ -54,7 +54,7 @@ def register_doctor_command(app: App) -> None:
     }
     register_extension_cli_group(
         app,
-        registry=get_first_party_registry(),
+        registry=get_command_registry(),
         group="doctor",
         handlers=handlers,
     )

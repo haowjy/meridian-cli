@@ -7,7 +7,7 @@ from typing import Any
 
 from meridian.cli.ext_registration import register_extension_cli_group
 from meridian.cli.invocation import Emitter, emit
-from meridian.lib.extensions.registry import get_first_party_registry
+from meridian.lib.extensions.registry import get_command_registry
 
 _MODELS_LIST_REDIRECT = (
     "`meridian models list` has moved to Mars.\nUse `meridian mars models list` instead."
@@ -30,7 +30,7 @@ def register_models_commands(app: Any) -> None:
     }
     register_extension_cli_group(
         app,
-        registry=get_first_party_registry(),
+        registry=get_command_registry(),
         group="models",
         handlers=handlers,
         default_handler=partial(_models_list_stub, emit),

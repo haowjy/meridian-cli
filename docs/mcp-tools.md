@@ -60,7 +60,7 @@ Invokes an MCP-surface command in process:
 ```
 
 Only `fqid` is required. `args` defaults to `{}`. The remaining fields are
-optional handler and tracing context.
+optional tracing context, recorded in the server's telemetry.
 
 Success returns `{"status": "ok", "result": ...}`. Errors return
 `{"status": "error", "code": "...", "message": "..."}`. Common codes are

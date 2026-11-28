@@ -13,8 +13,8 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.ops import diag
 from meridian.lib.ops import mars as mars_ops
 from meridian.lib.ops.diag import DoctorInput, doctor_sync
-from meridian.lib.ops.spawn.api import spawn_show_sync
 from meridian.lib.ops.spawn.models import SpawnShowInput
+from meridian.lib.ops.spawn.read import spawn_show_sync
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.reaper import reconcile_active_spawn

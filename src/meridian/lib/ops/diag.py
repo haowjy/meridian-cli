@@ -1,4 +1,3 @@
-import asyncio
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -828,7 +827,3 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
         killed_orphan_spawns=local_report.killed_orphan_spawns,
         autosync=autosync_status,
     )
-
-
-async def doctor(payload: DoctorInput) -> DoctorOutput:
-    return await asyncio.to_thread(doctor_sync, payload)

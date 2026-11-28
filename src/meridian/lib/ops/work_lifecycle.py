@@ -12,7 +12,6 @@ from meridian.lib.launch.session_links import Execution, execution_owners
 from meridian.lib.ops.context import resolve_active_work_scope
 from meridian.lib.ops.runtime import (
     ResolvedRoots,
-    async_from_sync,
     resolve_chat_id,
     resolve_roots,
     runtime_context,
@@ -766,17 +765,6 @@ def work_task_dir_sync(
     return WorkTaskDirOutput(task_dir=resolved_task_dir, warning=warning)
 
 
-work_start = async_from_sync(work_start_sync)
-work_update = async_from_sync(work_update_sync)
-work_done = async_from_sync(work_done_sync)
-work_delete = async_from_sync(work_delete_sync)
-work_reopen = async_from_sync(work_reopen_sync)
-work_switch = async_from_sync(work_switch_sync)
-work_rename = async_from_sync(work_rename_sync)
-work_clear = async_from_sync(work_clear_sync)
-work_task_dir = async_from_sync(work_task_dir_sync)
-
-
 __all__ = [
     "WorkClearInput",
     "WorkClearOutput",
@@ -795,22 +783,13 @@ __all__ = [
     "WorkTaskDirOutput",
     "WorkUpdateInput",
     "WorkUpdateOutput",
-    "work_clear",
     "work_clear_sync",
-    "work_delete",
     "work_delete_sync",
-    "work_done",
     "work_done_sync",
-    "work_rename",
     "work_rename_sync",
-    "work_reopen",
     "work_reopen_sync",
-    "work_start",
     "work_start_sync",
-    "work_switch",
     "work_switch_sync",
-    "work_task_dir",
     "work_task_dir_sync",
-    "work_update",
     "work_update_sync",
 ]

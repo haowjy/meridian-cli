@@ -7,20 +7,15 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from meridian.lib.bootstrap.services import (
-    build_extension_entrypoint,
     prepare_for_runtime_read,
     prepare_for_runtime_write,
 )
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.logging import configure_logging
-from meridian.lib.extensions.context import (
-    ExtensionCommandServices,
-    ExtensionInvocationContextBuilder,
-)
-from meridian.lib.extensions.dispatcher import ExtensionCommandDispatcher
+from meridian.lib.extensions.dispatcher import dispatch
 from meridian.lib.extensions.registry import (
-    build_first_party_registry,
     compute_manifest_hash,
+    get_command_registry,
 )
 from meridian.lib.extensions.types import (
     ExtensionErrorResult,
@@ -62,7 +57,7 @@ async def extension_list_commands() -> dict[str, Any]:
     EB3.8: Returns same fqids as CLI discovery.
     """
 
-    registry = build_first_party_registry()
+    registry = get_command_registry()
     commands = sorted(
         registry.list_for_surface(ExtensionSurface.MCP),
         key=lambda spec: spec.fqid,
@@ -127,7 +122,7 @@ async def extension_invoke(
             severity="error" if status == "error" else "info",
         )
 
-    registry = build_first_party_registry()
+    registry = get_command_registry()
     spec = registry.get(fqid)
     if spec is None:
         emit_invoked("error", code="not_found")
@@ -144,32 +139,13 @@ async def extension_invoke(
             "message": f"Command {fqid} is not available via MCP",
         }
 
-    # Rootless observability stays process-scoped via stderr telemetry rather
-    # than segment storage.
-    dispatcher = ExtensionCommandDispatcher(registry)
     project_root = resolve_project_root_resolution().project_root
     prepared = (
         prepare_for_runtime_write(project_root)
         if fqid in _IDENTITY_WRITING_TOOLS
         else prepare_for_runtime_read(project_root)
     )
-    application = build_extension_entrypoint(prepared)
-    services = ExtensionCommandServices(application=application)
-    context_builder = ExtensionInvocationContextBuilder(ExtensionSurface.MCP).with_authority(
-        prepared.authority
-    )
-    if request_id is not None:
-        context_builder = context_builder.with_request_id(request_id)
-    if work_id is not None:
-        context_builder = context_builder.with_work_id(work_id)
-    if spawn_id is not None:
-        context_builder = context_builder.with_spawn_id(spawn_id)
-    result = await dispatcher.dispatch(
-        fqid=fqid,
-        args=resolved_args,
-        context=context_builder.build(),
-        services=services,
-    )
+    result = await dispatch(spec, resolved_args)
     if isinstance(result, ExtensionErrorResult):
         emit_invoked("error", code=result.code)
         return {

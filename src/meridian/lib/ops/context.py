@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Literal
@@ -433,18 +432,6 @@ def _refresh_session_task_links(
         )
 
 
-async def task_dir(input: TaskDirInput) -> TaskDirOutput:
-    return await asyncio.to_thread(task_dir_sync, input)
-
-
-async def task_dir_set(input: TaskDirSetInput) -> TaskDirMutationOutput:
-    return await asyncio.to_thread(task_dir_set_sync, input)
-
-
-async def task_dir_clear(input: TaskDirClearInput) -> TaskDirMutationOutput:
-    return await asyncio.to_thread(task_dir_clear_sync, input)
-
-
 def context_sync(input: ContextInput) -> ContextOutput:
     from meridian.lib.ops.sync_daemon import project_sync_summaries
 
@@ -514,11 +501,6 @@ def context_dir_sync(name: str) -> str:
     return path.as_posix() if path is not None else ""
 
 
-async def context(input: ContextInput) -> ContextOutput:
-
-    return await asyncio.to_thread(context_sync, input)
-
-
 def work_current_sync(input: WorkCurrentInput) -> WorkCurrentOutput:
 
     _ = input
@@ -557,21 +539,6 @@ def work_root_sync(input: WorkRootInput) -> WorkRootOutput:
     return WorkRootOutput(work_root=resolved_paths.work_root.as_posix())
 
 
-async def work_current(input: WorkCurrentInput) -> WorkCurrentOutput:
-
-    return await asyncio.to_thread(work_current_sync, input)
-
-
-async def work_root(input: WorkRootInput) -> WorkRootOutput:
-
-    return await asyncio.to_thread(work_root_sync, input)
-
-
-async def work_path(input: WorkPathInput) -> WorkPathOutput:
-
-    return await asyncio.to_thread(work_path_sync, input)
-
-
 __all__ = [
     "ContextEntryOutput",
     "ContextInput",
@@ -587,19 +554,12 @@ __all__ = [
     "WorkPathOutput",
     "WorkRootInput",
     "WorkRootOutput",
-    "context",
     "context_sync",
     "resolve_active_work_scope",
-    "task_dir",
-    "task_dir_clear",
     "task_dir_clear_sync",
-    "task_dir_set",
     "task_dir_set_sync",
     "task_dir_sync",
-    "work_current",
     "work_current_sync",
-    "work_path",
     "work_path_sync",
-    "work_root",
     "work_root_sync",
 ]

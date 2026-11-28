@@ -11,7 +11,7 @@ from meridian.lib.core.formatting import relative_time, tabular
 from meridian.lib.core.util import FormatContext
 from meridian.lib.idle.deadline import cache_deadline
 from meridian.lib.ops.reference_recovery import recover_recorded_chat_harness_session_ids
-from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
+from meridian.lib.ops.runtime import resolve_roots_for_read
 from meridian.lib.ops.session_reentry import (
     Blocked,
     SessionReentryDecision,
@@ -331,13 +331,9 @@ def session_list_sync(
     return SessionListOutput(rows=tuple(rows), total_count=page.total)
 
 
-session_list = async_from_sync(session_list_sync)
-
-
 __all__ = [
     "SessionListInput",
     "SessionListOutput",
     "SessionListRow",
-    "session_list",
     "session_list_sync",
 ]

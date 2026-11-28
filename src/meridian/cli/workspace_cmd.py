@@ -5,14 +5,14 @@ from collections.abc import Callable
 from cyclopts import App
 
 from meridian.cli.ext_registration import register_extension_cli_group
-from meridian.lib.extensions.registry import get_first_party_registry
+from meridian.lib.extensions.registry import get_command_registry
 
 
 def register_workspace_commands(app: App) -> None:
     handlers: dict[str, Callable[[], Callable[..., None]]] = {}
     register_extension_cli_group(
         app,
-        registry=get_first_party_registry(),
+        registry=get_command_registry(),
         group="workspace",
         handlers=handlers,
         command_help_epilogues={

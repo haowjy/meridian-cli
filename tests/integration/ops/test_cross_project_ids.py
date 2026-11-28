@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-import meridian.lib.ops.spawn.api as spawn_api
+import meridian.lib.ops.spawn.wait as spawn_wait
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.refs import RefAmbiguous, RefNotFound, project_named_scope
 from meridian.lib.ops.locate import SpawnHit, locate
@@ -80,7 +80,7 @@ def test_wait_on_another_projects_spawn_records_nothing_for_the_caller(tmp_path:
     launch_paths(there_root, target).report.write_text("done\n", encoding="utf-8")
     caller = _start(here, here_root)
 
-    result = spawn_api.spawn_wait_sync(
+    result = spawn_wait.spawn_wait_sync(
         SpawnWaitInput(project_root=str(here), spawn_ids=(target,)),
         ctx=RuntimeContext(spawn_id=caller, runtime_root=here_root),
     )

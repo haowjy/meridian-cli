@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-import meridian.lib.ops.spawn.api as spawn_api
+import meridian.lib.ops.spawn.wait as spawn_wait
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.ops.spawn.models import (
     SpawnWaitInput,
@@ -51,7 +51,7 @@ def test_wait_can_fetch_results_without_consuming_parent_notifications(
         harness="pi",
         prompt="observer",
     ).spawn_id
-    result = spawn_api.spawn_wait_sync(
+    result = spawn_wait.spawn_wait_sync(
         SpawnWaitInput(project_root=str(project_root), spawn_ids=(str(spawn_id),), observe=observe),
         ctx=RuntimeContext(spawn_id=observer_id, runtime_root=runtime_root),
     )

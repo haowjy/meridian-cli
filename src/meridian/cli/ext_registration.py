@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -14,11 +13,7 @@ if TYPE_CHECKING:
 
     from meridian.lib.extensions.registry import ExtensionCommandRegistry
 
-logger = logging.getLogger(__name__)
 HandlerFactory = Callable[[], Callable[..., None]]
-
-# Input model fields injected at runtime, not from user CLI args.
-_IMPLICIT_INPUT_FIELDS: frozenset[str] = frozenset({"project_root"})
 
 
 def _make_auto_handler_from_spec(
@@ -26,22 +21,8 @@ def _make_auto_handler_from_spec(
     emitter: Emitter,
 ) -> Callable[..., None] | None:
     """Generate a no-arg CLI handler when args_schema has no required fields."""
-    sync_handler = spec.sync_handler
-    if sync_handler is None:
+    if any(field.is_required() for field in spec.args_schema.model_fields.values()):
         return None
-
-    for field_name, field_info in spec.args_schema.model_fields.items():
-        if field_info.is_required():
-            if field_name in _IMPLICIT_INPUT_FIELDS:
-                # Required implicit fields cannot be provided at auto-generation
-                # time. Fall back to requiring an explicit handler.
-                logger.debug(
-                    "Auto-handler skipped for %s: implicit field '%s' is required.",
-                    spec.fqid,
-                    field_name,
-                )
-                return None
-            return None
 
     def auto_handler() -> None:
         from meridian.cli.utils import cli_project_root_posix
@@ -49,7 +30,7 @@ def _make_auto_handler_from_spec(
         payload: dict[str, object] = {}
         if "project_root" in spec.args_schema.model_fields:
             payload["project_root"] = cli_project_root_posix()
-        emitter(sync_handler(payload))
+        emitter(spec.handler(spec.args_schema(**payload)))
 
     return auto_handler
 

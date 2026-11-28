@@ -13,31 +13,13 @@ from meridian.cli.app_tree import ext_app
 from meridian.cli.invocation import emit, get_global_options
 from meridian.cli.output import OutputFormat
 from meridian.cli.utils import resolve_cli_project_root
-from meridian.lib.bootstrap.services import build_extension_entrypoint, prepare_for_runtime_read
-from meridian.lib.extensions.context import (
-    ExtensionCommandServices,
-    ExtensionInvocationContextBuilder,
-)
-from meridian.lib.extensions.dispatcher import ExtensionCommandDispatcher
-from meridian.lib.extensions.registry import build_first_party_registry, compute_manifest_hash
+from meridian.lib.bootstrap.services import prepare_for_runtime_read
+from meridian.lib.extensions.dispatcher import dispatch
+from meridian.lib.extensions.registry import compute_manifest_hash, get_command_registry
 from meridian.lib.extensions.types import ExtensionErrorResult, ExtensionSurface
 
 EXIT_GENERAL_ERROR = 1
 EXIT_ARGS_ERROR = 7
-
-
-def _prepare_extension_runtime_read() -> tuple[
-    object,
-    ExtensionCommandServices,
-    ExtensionInvocationContextBuilder,
-]:
-    prepared = prepare_for_runtime_read(resolve_cli_project_root())
-    application = build_extension_entrypoint(prepared)
-    services = ExtensionCommandServices(application=application)
-    context_builder = ExtensionInvocationContextBuilder(ExtensionSurface.CLI).with_authority(
-        prepared.authority
-    )
-    return prepared, services, context_builder
 
 
 def _print_run_error(
@@ -96,7 +78,7 @@ def ext_list(
     EB3.1: Works with no app server.
     """
 
-    registry = build_first_party_registry()
+    registry = get_command_registry()
 
     extensions: dict[str, list[str]] = {}
     for spec in registry.list_for_surface(ExtensionSurface.CLI):
@@ -136,7 +118,7 @@ def ext_show(
 ) -> None:
     """Show details for an extension."""
 
-    registry = build_first_party_registry()
+    registry = get_command_registry()
 
     commands = sorted(
         (
@@ -196,7 +178,7 @@ def ext_commands(
     """
 
     effective_format = _resolve_effective_format(requested=format, json_output=json_output)
-    registry = build_first_party_registry()
+    registry = get_command_registry()
     commands = sorted(
         registry.list_for_surface(ExtensionSurface.CLI),
         key=lambda spec: spec.fqid,
@@ -282,7 +264,7 @@ def ext_run(
         raise SystemExit(EXIT_ARGS_ERROR)
     parsed_args = cast("dict[str, Any]", loaded_args)
 
-    registry = build_first_party_registry()
+    registry = get_command_registry()
     spec = registry.get(fqid)
     if spec is None:
         print(f"Command not found: {fqid}", file=sys.stderr)
@@ -291,22 +273,11 @@ def ext_run(
         print(f"Command {fqid} is not available via CLI", file=sys.stderr)
         raise SystemExit(EXIT_GENERAL_ERROR)
 
-    dispatcher = ExtensionCommandDispatcher(registry)
-    _, services, context_builder = _prepare_extension_runtime_read()
-    if request_id is not None:
-        context_builder = context_builder.with_request_id(request_id)
-    if work_id is not None:
-        context_builder = context_builder.with_work_id(work_id)
-    if spawn_id is not None:
-        context_builder = context_builder.with_spawn_id(spawn_id)
-    result = asyncio.run(
-        dispatcher.dispatch(
-            fqid=fqid,
-            args=parsed_args,
-            context=context_builder.build(),
-            services=services,
-        )
-    )
+    # The context IDs mirror MCP's extension_invoke; no command reads them.
+    _ = (work_id, spawn_id, request_id)
+    # Loading the project's config first makes a broken config fail every command alike.
+    prepare_for_runtime_read(resolve_cli_project_root())
+    result = asyncio.run(dispatch(spec, parsed_args))
     if isinstance(result, ExtensionErrorResult):
         _print_run_error(
             format=effective_format,

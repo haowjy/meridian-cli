@@ -58,8 +58,9 @@ def test_read_projection_does_not_reap_recorded_scope_but_explicit_reconcile_doe
         "meridian.lib.core.process_cleanup.terminate_scope_sync",
     )
 
-    from meridian.lib.ops.spawn.api import spawn_list_sync, spawn_stats_sync, spawn_wait_sync
     from meridian.lib.ops.spawn.models import SpawnListInput, SpawnStatsInput, SpawnWaitInput
+    from meridian.lib.ops.spawn.read import spawn_list_sync, spawn_stats_sync
+    from meridian.lib.ops.spawn.wait import spawn_wait_sync
 
     listed = spawn_list_sync(SpawnListInput(project_root=str(tmp_path), statuses=()))
     assert [(row.spawn_id, row.status) for row in listed.spawns] == [(spawn_id, "failed")]
