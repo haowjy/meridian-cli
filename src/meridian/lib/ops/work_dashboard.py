@@ -5,8 +5,8 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.context.runtime import RuntimeContext
+from meridian.lib.core.domain import is_active_spawn_status
 from meridian.lib.core.refs import is_spawn_id
-from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read

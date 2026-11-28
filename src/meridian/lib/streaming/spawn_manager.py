@@ -9,9 +9,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from meridian.lib.core.delivery import DeliveryKind, MessageRoute, MessageSender, TransportDead
-from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES, SpawnStatus
 from meridian.lib.core.event_hooks import run_event_hooks
-from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import (
     RawHarnessEvent,

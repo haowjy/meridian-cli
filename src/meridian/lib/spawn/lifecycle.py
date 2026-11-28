@@ -9,8 +9,7 @@ from uuid import UUID
 import psutil
 import structlog
 
-from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
-from meridian.lib.core.spawn_lifecycle import is_terminal_spawn_status
+from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus, is_terminal_spawn_status
 from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.platform.signals import signal_coordinator
 from meridian.lib.state import spawn_store

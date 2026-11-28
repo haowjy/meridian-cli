@@ -13,8 +13,8 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.bootstrap.services import RuntimeReadContext
 from meridian.lib.context.runtime import RuntimeContext
+from meridian.lib.core.domain import is_terminal_spawn_status
 from meridian.lib.core.logging import warn_once
-from meridian.lib.core.spawn_lifecycle import is_terminal_spawn_status
 from meridian.lib.harness.pi_private_state import (
     read_pi_consumption_state,
 )

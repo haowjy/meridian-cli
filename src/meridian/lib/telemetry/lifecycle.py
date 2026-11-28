@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
+from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.telemetry.observers import notify_observers
 
 if TYPE_CHECKING:

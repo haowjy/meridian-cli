@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
+from meridian.lib.core.domain import is_active_spawn_status
 from meridian.lib.ops import diag
 from meridian.lib.ops import mars as mars_ops
 from meridian.lib.ops.diag import DoctorInput, doctor_sync

@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.catalog.mars_roots import MarsRoots, mars_content_roots
 from meridian.lib.config.loader import load_user_config
 from meridian.lib.core.depth import is_root_side_effect_process
-from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
+from meridian.lib.core.domain import is_active_spawn_status
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.plugin_hosted import is_plugin_hosted
 from meridian.lib.ops.config_surface import build_config_surface

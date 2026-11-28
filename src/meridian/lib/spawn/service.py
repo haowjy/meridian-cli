@@ -13,31 +13,37 @@ import structlog
 
 from meridian.lib.core.clock import RealClock
 from meridian.lib.core.domain import (
+    CANCEL_GRACE_SECS,
     SpawnStatus,
     TerminalSpawnStatus,
     TokenUsage,
-)
-from meridian.lib.core.refs import RefNotFound
-from meridian.lib.core.spawn_lifecycle import (
-    CANCEL_GRACE_SECS,
     coerce_spawn_status,
     is_active_spawn_status,
     is_terminal_spawn_status,
 )
+from meridian.lib.core.refs import RefNotFound
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import BootstrapMode
 from meridian.lib.harness.plugin_hosted import is_plugin_hosted
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.platform.signals import signal_to_exit_code
+from meridian.lib.spawn.cleanup import sweep_unreleased_scopes
 from meridian.lib.spawn.lifecycle import SpawnLifecycleService
-from meridian.lib.spawn.managed_primary import release_managed_primary_scopes, tear_down_dead_launch
+from meridian.lib.spawn.managed_primary import (
+    release_managed_primary_scopes,
+    require_managed_processes_gone,
+    tear_down_dead_launch,
+    terminate_managed_primary_processes,
+)
 from meridian.lib.spawn.outcome import (
     ExecutionTerminalFacts,
     ExecutionTerminalOutcome,
     resolve_execution_terminal_outcome,
 )
+from meridian.lib.spawn.reaper import resolve_cleanup_claim
 from meridian.lib.state import spawn_store
 from meridian.lib.state.json_doc import write_model_once
+from meridian.lib.state.launch_lock import LaunchHandle, NotFound
 from meridian.lib.state.liveness import is_process_alive_with_birth, signal_with_birth
 from meridian.lib.state.paths import LaunchPaths, RuntimePaths
 from meridian.lib.state.primary_meta import read_primary_metadata
@@ -45,6 +51,7 @@ from meridian.lib.state.process_scope_projection import (
     mark_scope_released,
     read_scopes_from_disk,
 )
+from meridian.lib.state.reaper_cleanup_claim import read_cleanup_claim
 from meridian.lib.state.session_store import is_session_lease_owner_alive
 from meridian.lib.state.spawn.model import (
     CancelIntent,
@@ -52,7 +59,13 @@ from meridian.lib.state.spawn.model import (
     SpawnRecord,
     TerminalFacts,
 )
-from meridian.lib.state.spawn.repository import Applied, Decline, Declined, write_state_locked
+from meridian.lib.state.spawn.repository import (
+    Applied,
+    Decline,
+    Declined,
+    read_state,
+    write_state_locked,
+)
 from meridian.lib.state.spawn_status import (
     POLL_INTERVAL_SECS,
     Claimed,
@@ -507,6 +520,50 @@ class SpawnApplicationService:
             record,
             managed_if_unrecorded=_runs_managed_primary(record),
         )
+
+    def finish_last_launch(self, handle: LaunchHandle) -> SpawnRecord:
+        """Before a continue: end the last launch of the spawn whose launch lock ``handle`` holds.
+
+        With the lock held no runner of the last launch is alive. Unlike ``finalize_dead_launch``,
+        this writes the outcome (and dispatches ``spawn.finished``) before it stops what the
+        launch left; ``.context/CONTEXT.md`` says why both orders exist.
+        """
+        spawn_id = str(handle.spawn_id)
+        spawns_dir = self._runtime_root / "spawns"
+        row = read_state(spawns_dir, spawn_id, include_prompt=False)
+        if row is None:
+            raise NotFound(f"Spawn '{spawn_id}' not found")
+        launch = LaunchPaths.for_row(self._runtime_root, row)
+        if row.terminal is None:
+            derived = derive(self._runtime_root, row)
+            terminal = derived.terminal
+            assert terminal is not None
+            outcome = self._lifecycle.finalize(
+                spawn_id,
+                cast("spawn_store.TerminalSpawnStatus", derived.status),
+                terminal.exit_code,
+                origin=terminal.origin,
+                error=terminal.error,
+                finished_at=terminal.finished_at,
+                expected_n=row.launch_number,
+            )
+            if not isinstance(outcome, Applied):
+                raise ValueError(f"{spawn_id} changed while it was being continued; retry")
+            row = outcome.after
+        # A claim records processes of the last launch whatever ended it; none may reach the next.
+        if read_cleanup_claim(self._runtime_root, spawn_id):
+            resolve_cleanup_claim(self._runtime_root, row)
+            if read_cleanup_claim(self._runtime_root, spawn_id):
+                raise ValueError(
+                    f"{spawn_id} has processes from its last run that could not be stopped; "
+                    "run `meridian doctor`"
+                )
+        # A managed primary's backend and TUI belong to its session, whose runner is dead.
+        metadata = read_primary_metadata(launch)
+        terminate_managed_primary_processes(metadata, include_launcher=False)
+        sweep_unreleased_scopes(launch, spawn_id)
+        require_managed_processes_gone(metadata, spawn_id)
+        return row
 
     async def complete_execution(
         self,

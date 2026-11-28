@@ -23,17 +23,17 @@ from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.caller_boundary import CallerBoundaryCheck
 from meridian.lib.core.context_ref import context_ref_values
 from meridian.lib.core.depth import max_depth_reached
-from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.core.refs import RefNotFound, parse_ref
-from meridian.lib.core.sink import NullSink, OutputSink
-from meridian.lib.core.spawn_lifecycle import (
+from meridian.lib.core.domain import (
     ACTIVE_SPAWN_STATUSES,
     ALL_SPAWN_STATUSES,
     FAILURE_SPAWN_STATUSES,
     TERMINAL_SPAWN_STATUSES,
+    SpawnStatus,
     is_active_spawn_status,
     is_terminal_spawn_status,
 )
+from meridian.lib.core.refs import RefNotFound, parse_ref
+from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.bundle import project_effective_policy

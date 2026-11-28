@@ -20,8 +20,8 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.config.project_root import resolve_project_root_resolution
+from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.refs import is_chat_id
-from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import ChatId
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.adapter import NativeRelocation

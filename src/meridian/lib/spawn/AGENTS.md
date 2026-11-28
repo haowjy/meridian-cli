@@ -7,8 +7,10 @@ Lifecycle and cleanup contracts: [.context/CONTEXT.md](.context/CONTEXT.md); can
 [.context/cancel.md](.context/cancel.md).
 
 - `SpawnApplicationService` (`service.py`) is the single writer of a spawn's terminal status:
-  cancel, `complete_spawn`, `complete_execution` and `finalize_dead_launch`. Nothing else
-  persists an outcome.
+  cancel, `complete_spawn`, `complete_execution`, `finalize_dead_launch` and, for a continue,
+  `finish_last_launch`. Nothing outside `lib/spawn` persists an outcome.
+- Two finish paths for a dead launch run cleanup and the terminal write in opposite orders
+  (`.context/CONTEXT.md`); keep each as it is unless you mean to change behavior.
 - Per-spawn ordering of cleanup, terminal write and hooks comes from the files: the
   launch-lock claim (`claim_dead_launch`) and the spawn row lock. Services are built per
   operation (`bootstrap.services.build_spawn_application_service_from_roots`), so an

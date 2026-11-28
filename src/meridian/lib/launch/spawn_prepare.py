@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from meridian.lib.catalog.model_aliases import MarsResultCache
@@ -41,7 +42,7 @@ from meridian.plugin_api.types import SpawnKind
 if TYPE_CHECKING:
     from meridian.lib.harness.registry import HarnessRegistry
     from meridian.lib.observability.debug_tracer import DebugTracer
-    from meridian.lib.spawn.service import SpawnApplicationService
+    from meridian.lib.spawn.lifecycle import SpawnLifecycleService
 
 
 @dataclass(frozen=True)
@@ -71,7 +72,8 @@ def _config_snapshot_env(config_snapshot: dict[str, object]) -> dict[str, str]:
 
 
 async def prepare_spawn(
-    service: SpawnApplicationService,
+    lifecycle: SpawnLifecycleService,
+    runtime_root: Path,
     *,
     request: SpawnRequest,
     runtime: LaunchRuntime,
@@ -120,7 +122,7 @@ async def prepare_spawn(
 
     reserved_launch = await asyncio.to_thread(
         spawn_store.reserve_launch,
-        service.runtime_root,
+        runtime_root,
     )
     final_spawn_id = reserved_launch.spawn_id
     config_env = _config_snapshot_env(runtime.config_snapshot)
@@ -148,7 +150,7 @@ async def prepare_spawn(
     effective_work_id = (work_id or launch_ctx.work_id or "").strip() or None
     start_metadata = SpawnStartMetadata(
         forked_from_history_id=resolved_request.session.forked_from_history_id,
-        usage_seed=fork_usage_seed(service.runtime_root, resolved_request.session),
+        usage_seed=fork_usage_seed(runtime_root, resolved_request.session),
         desc=desc,
         work_id=effective_work_id,
         goal=getattr(resolved_request, "goal", None),
@@ -167,7 +169,7 @@ async def prepare_spawn(
         skill_paths=resolved_request.skill_paths,
     )
     published_launch = await asyncio.to_thread(
-        service.lifecycle.start,
+        lifecycle.start,
         SpawnReservation(
             chat_id=chat_id or "",
             owner_chat_id=chat_id or "",

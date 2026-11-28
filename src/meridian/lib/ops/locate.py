@@ -24,6 +24,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import NamedTuple
 
+from meridian.lib.core.domain import ACTIVE_SPAWN_STATUSES, is_active_spawn_status
 from meridian.lib.core.refs import (
     INBOX_IS_NO_SESSION,
     SELECTORS,
@@ -34,7 +35,6 @@ from meridian.lib.core.refs import (
     parse_ref,
     project_is_named,
 )
-from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES, is_active_spawn_status
 from meridian.lib.core.types import SpawnId
 from meridian.lib.machines.caller import is_machine_call
 from meridian.lib.machines.resolve import MachineError, resolve_machine, this_machine

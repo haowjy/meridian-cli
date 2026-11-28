@@ -27,9 +27,9 @@ from meridian.lib.core.caller_boundary import (
     inside_launcher_sandbox,
 )
 from meridian.lib.core.delivery import SEND_TIMEOUT_SECONDS
+from meridian.lib.core.domain import is_active_spawn_status
 from meridian.lib.core.process_start import starting_cwd, starting_env
 from meridian.lib.core.refs import RefAmbiguous, RefNotFound, is_chat_id, is_spawn_id
-from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.harness.injected_marker import MARKER
 from meridian.lib.inbox.caller import InboxCaller, resolve_caller
 from meridian.lib.inbox.filing import FilingOptions, file_from_command

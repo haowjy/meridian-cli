@@ -10,8 +10,8 @@ import structlog
 
 from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
 from meridian.lib.core.depth import is_root_side_effect_process
-from meridian.lib.core.domain import ACTIVE_SPAWN_STATUSES
-from meridian.lib.core.spawn_lifecycle import (
+from meridian.lib.core.domain import (
+    ACTIVE_SPAWN_STATUSES,
     is_active_spawn_status,
     is_terminal_spawn_status,
 )

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 
-from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
+from meridian.lib.core.domain import is_active_spawn_status
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state import spawn_store
 from meridian.lib.state.spawn.model import SpawnRecord

@@ -16,13 +16,13 @@ import structlog
 
 from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
+from meridian.lib.core.domain import (
+    is_active_spawn_status as _is_active_spawn_status,
+)
 from meridian.lib.core.launch_policy_snapshot import (
     LaunchPolicySnapshot as LaunchPolicySnapshot,
 )
 from meridian.lib.core.refs import is_spawn_id
-from meridian.lib.core.spawn_lifecycle import (
-    is_active_spawn_status as _is_active_spawn_status,
-)
 from meridian.lib.core.spawn_start import SpawnStartMetadata, derive_display_label
 from meridian.lib.core.types import ChatId, HarnessSessionId, SpawnId
 from meridian.lib.platform.atomic import PRIVATE_FILE_MODE, atomic_write_text

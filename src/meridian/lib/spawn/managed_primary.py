@@ -19,6 +19,9 @@ from meridian.lib.state.spawn.model import SpawnRecord
 _RELEASE_GRACE_SECS = 5.0
 
 
+TEARDOWN_GRACE_SECS = 5.0
+
+
 def _terminate_pid(pid: int) -> bool:
 
     if pid <= 0 or pid == os.getpid():
@@ -119,8 +122,30 @@ def release_managed_primary_scopes(
     )
 
 
+def require_managed_processes_gone(metadata: PrimaryMetadata | None, spawn_id: str) -> None:
+    """The backend and TUI were signalled by exact birth; the next launch needs them gone."""
+    if metadata is None or not metadata.managed_backend:
+        return
+    survivors = (
+        (metadata.backend_pid, metadata.backend_birth_epoch),
+        (metadata.tui_pid, metadata.tui_birth_epoch),
+    )
+    deadline = time.monotonic() + TEARDOWN_GRACE_SECS
+    while time.monotonic() < deadline:
+        if not any(
+            pid is not None and is_process_alive_with_birth(pid, birth) for pid, birth in survivors
+        ):
+            return
+        time.sleep(0.05)
+    raise ValueError(
+        f"{spawn_id} has processes from its last run that could not be stopped; "
+        "run `meridian doctor`"
+    )
+
+
 __all__ = [
     "release_managed_primary_scopes",
+    "require_managed_processes_gone",
     "tear_down_dead_launch",
     "terminate_managed_primary_processes",
 ]

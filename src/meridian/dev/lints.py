@@ -385,14 +385,15 @@ def core_layer_violations(sources: Sources) -> list[Violation]:
 
 
 def state_spawn_import_violations(sources: Sources) -> list[Violation]:
-    """Reject ``lib/state/`` importing ``lib/spawn/``, which is built on it."""
+    """Reject ``lib/state/`` importing ``lib/spawn/``, which is built on it, or ``lib/bootstrap/``,
+    which builds the spawn service."""
 
     return _import_violations(
         sources,
         "meridian/lib/state/",
-        lambda name: _within(name, "meridian.lib.spawn"),
-        "lib/state may not import {}, even lazily: spawn lifecycle builds on state. Move the "
-        "caller into lib/spawn or take the behavior as an argument.",
+        lambda name: _within(name, "meridian.lib.spawn") or _within(name, "meridian.lib.bootstrap"),
+        "lib/state may not import {}, even lazily: spawn lifecycle (and bootstrap, which builds "
+        "it) builds on state. Move the caller into lib/spawn or take the behavior as an argument.",
     )
 
 

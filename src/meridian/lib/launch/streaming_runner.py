@@ -20,8 +20,13 @@ from meridian.lib.bootstrap.services import (
 )
 from meridian.lib.config.models import MeridianConfig
 from meridian.lib.core.clock import Clock, RealClock
-from meridian.lib.core.domain import Spawn, SpawnStatus, TerminalSpawnStatus
-from meridian.lib.core.spawn_lifecycle import SIGNAL_STOP_BUDGET_SECS, parse_terminal_status
+from meridian.lib.core.domain import (
+    SIGNAL_STOP_BUDGET_SECS,
+    Spawn,
+    SpawnStatus,
+    TerminalSpawnStatus,
+    parse_terminal_status,
+)
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
 from meridian.lib.harness.attempt_facts import AttemptFacts

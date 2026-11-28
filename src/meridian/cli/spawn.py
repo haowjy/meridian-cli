@@ -34,8 +34,7 @@ from meridian.lib.bootstrap.services import (
     prepare_for_runtime_write,
 )
 from meridian.lib.context.runtime import RuntimeContext
-from meridian.lib.core.domain import ALL_SPAWN_STATUSES, SpawnStatus
-from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
+from meridian.lib.core.domain import ACTIVE_SPAWN_STATUSES, ALL_SPAWN_STATUSES, SpawnStatus
 from meridian.lib.core.util import FormatContext
 from meridian.lib.extensions.registry import get_first_party_registry
 from meridian.lib.harness.pi_private_state import hold_pi_bash
