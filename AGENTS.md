@@ -64,7 +64,15 @@ uv run pytest tests/                             # full suite
 uv run ruff check . && uv run ruff format .      # lint, format
 uv run --extra dev python -m pyright --warnings  # types: 0 errors, 0 warnings
 uv run python -m meridian.dev.lints              # source-tree rules
+node tools/atlas/check.mjs docs/atlas/atlas.config.mjs   # the system atlas
 ```
+
+[docs/atlas/](docs/atlas/README.md) maps the system as released: what runs where, the code,
+the data on disk, and Mars and meridian-comms around Meridian. Each state machine has a
+`.context/state-machines.md` beside its code, indexed in
+[.context/state-machines/index.md](.context/state-machines/index.md). A change that moves,
+adds or removes something they name, or changes a machine's transitions, updates them in the
+same commit.
 
 ## Shared Checkout
 
