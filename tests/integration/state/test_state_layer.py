@@ -9,7 +9,7 @@ from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state.launch_lock import LaunchSlot
-from meridian.lib.state.paths import resolve_runtime_paths
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn.repository import Applied, Declined
 from meridian.lib.state.spawn_store import (
     finalize_spawn,
@@ -25,7 +25,7 @@ from tests.support.process_race import run_spawn_race_or_skip
 
 def _write_start_and_finalize(project_root: str, idx: int) -> None:
     root = Path(project_root)
-    runtime_root = resolve_runtime_paths(root).root_dir
+    runtime_root = resolve_project_runtime_root_for_write(root)
     spawn_id = SpawnId(f"rlock{idx}")
     start_spawn(
         runtime_root,
@@ -94,7 +94,7 @@ def _concurrent_update_worker(
 # To enable this on Windows the state-layer locking would need to be ported to a Windows-native
 # advisory lock (e.g. LockFileEx) behind a platform adapter.
 def test_locking_contention_writes_clean_v2_state(tmp_path: Path) -> None:
-    runtime_root = resolve_runtime_paths(tmp_path).root_dir
+    runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     process_count = 8
 
     ctx = multiprocessing.get_context("spawn")

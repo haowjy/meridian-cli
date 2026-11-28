@@ -11,7 +11,7 @@ from meridian.lib.core.process_cleanup import reclaim_session_owned_scopes_for_c
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.process_scope.base import CleanupResult, ProcessScopeSnapshot
 from meridian.lib.state import process_scope_projection, spawn_store
-from meridian.lib.state.paths import resolve_runtime_paths
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.process_scope_projection import (
     is_scope_released,
     mark_scope_released,
@@ -28,7 +28,7 @@ _OLD_STARTED_AT = "2000-01-01T00:00:00Z"
 
 
 def _runtime_root(tmp_path: Path) -> Path:
-    runtime_root = resolve_runtime_paths(tmp_path).root_dir
+    runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     runtime_root.mkdir(parents=True, exist_ok=True)
     return runtime_root
 

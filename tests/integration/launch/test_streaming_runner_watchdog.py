@@ -99,9 +99,6 @@ async def test_streaming_attempt_bounds_backend_startup_with_no_events(
         async def stop_spawn(self, spawn_id, **kwargs):
             pass
 
-        def get_connection(self, _spawn_id: SpawnId) -> None:
-            return None
-
         async def start_spawn(
             self,
             _config: ConnectionConfig,

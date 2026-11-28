@@ -32,6 +32,7 @@ from tests.support.resident_drain import (
     resident_event,
     start_manager,
 )
+from tests.support.spawn_manager import active_connection
 
 
 @pytest.mark.asyncio
@@ -226,7 +227,7 @@ async def test_resident_persistent_policy_emits_boundary_and_stays_alive(
                 asyncio.shield(manager.wait_for_completion(spawn_id)),
                 timeout=0.05,
             )
-        assert manager.get_connection(spawn_id) is connection
+        assert active_connection(manager, spawn_id) is connection
         assert True not in connection.fake_resident_backend.awaiting_done_values
     finally:
         await manager.stop_spawn(spawn_id)
@@ -251,7 +252,7 @@ async def test_opencode_terminal_success_resides_until_child_finishes(
                 asyncio.shield(manager.wait_for_completion(spawn_id)),
                 timeout=0.05,
             )
-        assert manager.get_connection(spawn_id) is connection
+        assert active_connection(manager, spawn_id) is connection
         assert connection.fake_resident_backend.awaiting_done_values[-1] is True
 
         spawn_store.finalize_spawn(
@@ -316,7 +317,7 @@ async def test_resident_still_waits_on_genuinely_active_finalizing_child(
                 asyncio.shield(manager.wait_for_completion(spawn_id)),
                 timeout=0.05,
             )
-        assert manager.get_connection(spawn_id) is connection
+        assert active_connection(manager, spawn_id) is connection
         assert connection.fake_resident_backend.awaiting_done_values[-1] is True
     finally:
         await manager.stop_spawn(spawn_id)

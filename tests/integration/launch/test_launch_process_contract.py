@@ -300,7 +300,9 @@ def test_binding_mirrors_only_the_first_identity(
             assert isinstance(conflict, Conflict)
             assert conflict.kept.session_id == "first"
         assert len([log for log in logs if log["event"] == "native_binding_conflict"]) == 1
-        assert session_store.get_session_harness_id(tmp_path, chat_id) == "first"
+        record = session_store.chat_record(tmp_path, chat_id)
+        assert record is not None
+        assert record.harness_session_id == "first"
     finally:
         session_store.stop_session(tmp_path, chat_id)
 
