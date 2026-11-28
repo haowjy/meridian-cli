@@ -101,6 +101,33 @@ says how to move it. The migration script below does those steps for you.
     sync in a project removes the user-level items the new Mars installed there (they are
     Mars's own records); this release puts them back on its next sync.
 
+## `git-autosync` rows and `meridian sync conflict` are gone
+
+0.24.0 replaced the `git-autosync` hook with the sync daemon and kept what it removed
+working, unused, until the next minor (see
+[Git contexts sync through a daemon](#git-contexts-sync-through-a-daemon-not-the-git-autosync-hook)).
+This release removes it:
+
+- **A `[[hooks]] builtin = "git-autosync"` row is an invalid row.** Delete it; git contexts
+  sync on their own. `meridian hooks list`, `hooks check` and `hooks run` exit 1 with:
+
+  ```
+  error: Invalid value for 'project.hooks[1]': builtin `git-autosync` was removed; git contexts sync by themselves (see `[context.<name>] autosync`); delete this row.
+  ```
+
+  Runtime dispatch logs the same text, drops the row and runs the valid ones, as it does for
+  the [removed hook names](#removed-hook-names-and-keys).
+- **`remote` and `exclude` on any `[[hooks]]` row are rejected** the same way
+  (`` `remote` was removed; it belonged to the removed `git-autosync` hook; delete it ``).
+  Delete the key.
+- **`meridian sync conflict list|show|resolve` are gone** and fail with
+  `Unknown command "conflict"`, exit 1. `meridian sync status` shows a stopped clone, and
+  `meridian sync now <context>` shows both sides of each conflicting file.
+- **`Hook.remote` and `Hook.exclude` are gone from `meridian.plugin_api`.** A plugin reads
+  `Hook.options`.
+- **`meridian doctor --prune` no longer removes the old hook's files.** Delete any
+  `~/.meridian/locks/clone-*.lock` and `~/.meridian/projects/*/autosync/` that are left.
+
 ## `meridian message` replaces `meridian spawn message`
 
 New in this release. `meridian message <address> "..."` sends to a running session by its

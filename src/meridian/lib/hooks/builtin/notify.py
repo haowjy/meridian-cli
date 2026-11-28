@@ -52,7 +52,6 @@ class NotifyHook:
     default_interval: str | None = None
     options_model: type[BaseModel] = NotifyOptions
     # Unnamed rows are all `notify`, so a row on an event replaces its default route.
-    identity_options: tuple[str, ...] = ()
 
     def check_requirements(self) -> tuple[bool, str | None]:
         return True, None

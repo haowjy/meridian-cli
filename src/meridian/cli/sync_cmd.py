@@ -21,13 +21,6 @@ def register_sync_commands(app: App) -> None:
         help_formatter=ALIGNED_PLAIN_FORMATTER,
         help_format="plaintext",
     )
-    conflict_app = App(
-        name="conflict",
-        help="Removed: conflicts now show in `meridian sync status` and `meridian sync now`.",
-        help_epilogue="",
-        help_formatter=ALIGNED_PLAIN_FORMATTER,
-        help_format="plaintext",
-    )
     service_app = App(
         name="service",
         help="Install or remove the user service that runs the sync daemon.",
@@ -35,7 +28,6 @@ def register_sync_commands(app: App) -> None:
         help_formatter=ALIGNED_PLAIN_FORMATTER,
         help_format="plaintext",
     )
-    sync_app.command(conflict_app, name="conflict")
     sync_app.command(service_app, name="service")
     app.command(sync_app, name="sync")
 
@@ -117,32 +109,3 @@ def register_sync_commands(app: App) -> None:
 
     service_app.command(service_install, name="install")
     service_app.command(service_uninstall, name="uninstall")
-
-    def _conflict_removed(*, fails: bool) -> None:
-        from meridian.lib.ops.sync_daemon import conflict_removed_sync
-
-        emit(conflict_removed_sync())
-        # `show` and `resolve` must not look like they worked to a script.
-        if fails:
-            raise SystemExit(1)
-
-    # Kept for one minor release: `list` answers with no conflicts, the others fail with a
-    # pointer.
-    def conflict_list() -> None:
-        """Removed. Conflicts show in `meridian sync status`."""
-
-        _conflict_removed(fails=False)
-
-    def conflict_show(*_conflict_id: str) -> None:
-        """Removed. Conflicts show in `meridian sync status` and `meridian sync now`."""
-
-        _conflict_removed(fails=True)
-
-    def conflict_resolve(*_conflict_id: str) -> None:
-        """Removed. Resolve in the clone, then run `meridian sync now <context>`."""
-
-        _conflict_removed(fails=True)
-
-    conflict_app.command(conflict_list, name="list")
-    conflict_app.command(conflict_show, name="show")
-    conflict_app.command(conflict_resolve, name="resolve")

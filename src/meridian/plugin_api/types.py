@@ -96,9 +96,7 @@ class Hook:
     enabled: bool = True
     priority: int = 0
     require_serial: bool = False
-    exclude: tuple[str, ...] = ()
     options: Mapping[str, object] = field(default_factory=_default_options)
-    remote: str | None = None
 
 
 @dataclass(frozen=True)

@@ -96,8 +96,6 @@ _READ_ONLY_COMMANDS: tuple[PlatformCommand, ...] = (
     _prefix("meridian spawn status"),
     _prefix("meridian spawn subagents"),
     _prefix("meridian spawn wait"),
-    _prefix("meridian sync conflict list"),
-    _prefix("meridian sync conflict show"),
     _exact("meridian task-dir"),
     _prefix("meridian telemetry query"),
     _prefix("meridian telemetry status"),

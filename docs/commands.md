@@ -715,9 +715,6 @@ prints each conflicting file with both sides.
 | `meridian sync service install` | Install the user service and start it; also repairs a missing unit, a moved install or a stopped daemon, and undoes `uninstall`. Works for any install and home (a non-default home gets its own service name) |
 | `meridian sync service uninstall` | Stop and remove the user service and write `autosync/service.off`, so a later launch doesn't install it again |
 
-`meridian sync conflict list|show|resolve` were removed; for one minor release `list` prints
-a pointer and no conflicts, and `show` and `resolve` print it and exit 1.
-
 A clone is `stopped` when its last pass conflicted or left the default branch, when passes
 have failed for 15 minutes, or when its worker reported nothing for 15 minutes.
 
