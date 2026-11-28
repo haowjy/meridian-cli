@@ -11,7 +11,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -186,41 +185,19 @@ def register_project(project_root: Path, *, force: bool = False) -> Registration
 
 
 def prune_leftovers() -> int:
-    """`meridian doctor --prune`: root records whose project is gone, and what the removed
-    `git-autosync` hook left. Returns how many paths it removed."""
+    """`meridian doctor --prune`: root records whose project is gone. Returns how many it
+    removed."""
 
     removed = 0
     for record in (autosync_dir() / "roots").glob("*.json"):
         data = _read_json(record)
         root = data.get("root") if data else None
         if isinstance(root, str) and not Path(root).exists():
-            removed += _remove(record)
-    return removed + _prune_old_hook_files()
-
-
-def _remove(path: Path) -> int:
-    """1 if `path` is gone afterwards by this call, else 0."""
-
-    try:
-        if path.is_dir():
-            shutil.rmtree(path)
-        else:
-            path.unlink()
-    except OSError:
-        return 0
-    return 1
-
-
-def _prune_old_hook_files() -> int:
-    """Migration, removed with the `git-autosync` stub (see `.context/TODO`): the old hook's
-    per-clone locks and per-project state."""
-
-    home = get_user_home()
-    removed = 0
-    for lock in (home / "locks").glob("clone-*.lock"):
-        removed += _remove(lock)
-    for state_dir in (home / "projects").glob("*/autosync"):
-        removed += _remove(state_dir)
+            try:
+                record.unlink()
+            except OSError:
+                continue
+            removed += 1
     return removed
 
 

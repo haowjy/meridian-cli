@@ -471,9 +471,6 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _read_project(("sync", "status"), "Show the sync daemon and git context states."),
     _write_rootless(("sync", "service", "install"), "Install the sync daemon's user service."),
     _write_rootless(("sync", "service", "uninstall"), "Remove the sync daemon's user service."),
-    _read_rootless(("sync", "conflict", "list"), "Removed: points to `sync status`."),
-    _read_rootless(("sync", "conflict", "show"), "Removed: points to `sync status`."),
-    _read_rootless(("sync", "conflict", "resolve"), "Removed: points to `sync now`."),
     _read_project(("workspace", "list"), "List workspaces."),
     _author_project(
         ("workspace", "init"),

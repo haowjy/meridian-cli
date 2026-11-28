@@ -1,7 +1,9 @@
 # Hooks
 
 Runtime dispatch drops and reports invalid rows while preserving valid rows and
-default overrides. Inspection reports all row errors. Notification defaults
+default overrides. A removed event name, builtin or row key stays in `schema.py`'s
+`_REMOVED_*` tables after its deprecation window, so an old row fails naming what to do
+instead of loading with the key ignored. Inspection reports all row errors. Notification defaults
 are ordinary lowest-layer rows: a matching disabled row silences delivery.
 
 External hooks inherit no registered payload variables from the caller; absent
