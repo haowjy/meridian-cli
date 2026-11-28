@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from meridian.lib.core.caller import caller_identity
-from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
+from meridian.lib.core.domain import is_active_spawn_status
 from meridian.lib.state import spawn_store
+from meridian.lib.state.caller import caller_identity
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.primary_meta import TurnActivity, record_turn_activity
 
