@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-import meridian.lib.ops.spawn.api as spawn_api
+import meridian.lib.ops.spawn.control as spawn_control
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.types import HarnessId, SpawnId
@@ -441,7 +441,7 @@ async def test_spawn_rearm_op_extends_resident_deadline(
 
         await determinism.sleep(0.18)
 
-        result = spawn_api.spawn_rearm_sync(
+        result = spawn_control.spawn_rearm_sync(
             SpawnRearmInput(spawn_id=str(spawn_id), reason="p2 is still running"),
             ctx=RuntimeContext(spawn_id=spawn_id),
             prepared=prepared,

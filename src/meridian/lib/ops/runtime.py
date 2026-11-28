@@ -1,9 +1,6 @@
-import asyncio
-import functools
-from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -31,24 +28,11 @@ from meridian.lib.state.user_paths import get_project_home, get_user_home
 if TYPE_CHECKING:
     from meridian.lib.bootstrap.services import RuntimeWriteContext
 
-P = ParamSpec("P")
-T = TypeVar("T")
 RuntimeRootSource = Literal[
     "env",
     "user-home-project",
     "unresolved",
 ]
-
-
-def async_from_sync(sync_fn: Callable[P, T]) -> Callable[P, Coroutine[Any, Any, T]]:
-    @functools.wraps(sync_fn)
-    async def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
-        from meridian.lib.core.logging import warning_cache_scope
-
-        with warning_cache_scope():
-            return await asyncio.to_thread(sync_fn, *args, **kwargs)
-
-    return wrapper
 
 
 class OperationRuntime(BaseModel):

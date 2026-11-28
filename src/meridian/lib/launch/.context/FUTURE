@@ -7,7 +7,7 @@
   while ordinary production policy resolution rejects that surface and
   `tests/support/launch.py` recreates its preparation path. Use explicit
   production surfaces and exercise the real prepare/bind pipeline in tests.
-- ops/spawn/api.py fork path: `inherited_skills` re-passes the source spawn's
+- ops/spawn/follow_up.py fork path: `inherited_skills` re-passes the source spawn's
   resolved skill names to Mars as extra skills, duplicating the profile's own
   loads (Mars dedupes, so it is harmless). Pass only the source's caller-requested
   extras once the snapshot records them separately.

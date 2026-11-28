@@ -14,11 +14,6 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_authority_for_read,
     resolve_runtime_authority_for_write,
 )
-from meridian.lib.service_context import (
-    ApplicationContext,
-    ApplicationServices,
-    ExtensionEntryPoint,
-)
 from meridian.lib.state.project_identity import (
     ensure_project_identity,
     nearest_ancestor_project_marker,
@@ -67,19 +62,6 @@ def _materialization_notice(authority: RuntimeAuthoritySnapshot) -> str | None:
     if nearest_marker is not None:
         notice += f" (nearest project: {nearest_marker.as_posix()})"
     return notice
-
-
-def _application_context_from_runtime(
-    prepared: RuntimeReadContext | RuntimeWriteContext,
-) -> ApplicationContext:
-
-    authority = getattr(prepared, "authority", None)
-    return ApplicationContext(
-        project_root=prepared.project_root,
-        runtime_root=prepared.runtime_root,
-        config=prepared.config,
-        authority=authority,
-    )
 
 
 def prepare_for_project_read(project_root: Path) -> ProjectReadContext:
@@ -207,15 +189,3 @@ def build_spawn_application_service_from_roots(
         lifecycle=lifecycle,
     )
     return SpawnApplicationService(runtime_root, lifecycle_service)
-
-
-def build_extension_entrypoint(
-    prepared: RuntimeReadContext | RuntimeWriteContext,
-    *,
-    lifecycle: SpawnLifecycleService | None = None,
-) -> ExtensionEntryPoint:
-
-    return ExtensionEntryPoint(
-        context=_application_context_from_runtime(prepared),
-        services=ApplicationServices(lifecycle=lifecycle),
-    )

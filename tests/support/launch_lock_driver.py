@@ -108,9 +108,9 @@ def main() -> None:
     )
     race = os.environ.get("FAKE_RACE")
     if race:
-        from meridian.lib.ops.spawn import api
+        from meridian.lib.ops.spawn import follow_up
 
-        original = api.begin_continue
+        original = follow_up.begin_continue
 
         def scheduled_begin(**kwargs: Any) -> Any:
             root = Path(os.environ["FAKE_ROOT"])
@@ -125,7 +125,7 @@ def main() -> None:
                 while not (root / "second-swept").exists():
                     time.sleep(0.01)
 
-        patch.setattr(api, "begin_continue", scheduled_begin)
+        patch.setattr(follow_up, "begin_continue", scheduled_begin)
     if sys.argv[1:2] == ["worker"]:
         if os.environ.get("FAKE_HOLD_WORKER") == "1":
             root = Path(os.environ["FAKE_ROOT"])

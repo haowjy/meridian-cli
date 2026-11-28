@@ -56,11 +56,11 @@ records it as `parent_id`, and the chat that owes the result as `owner_chat_id`.
 ## cmd
 
 `meridian spawn` in `cli/spawn.py`, which calls `spawn_create_sync` in
-`lib/ops/spawn/api.py`. It returns once the child is started (`--bg`) or finished
+`lib/ops/spawn/create.py`. It returns once the child is started (`--bg`) or finished
 (foreground), and prints the ID.
 
 - Kind: module
-- Paths: `src/meridian/cli/spawn.py`, `src/meridian/lib/ops/spawn/api.py`
+- Paths: `src/meridian/cli/spawn.py`, `src/meridian/lib/ops/spawn/create.py`
 
 ## prepare
 
@@ -153,9 +153,9 @@ and a continue ends the dead launch with `finish_last_launch`.
 
 ## wait
 
-`meridian spawn wait` (`spawn_wait` in `lib/ops/spawn/api.py`) blocks until each named or owed child is terminal, and prints its report.
+`meridian spawn wait` (`spawn_wait_sync` in `lib/ops/spawn/wait.py`) blocks until each named or owed child is terminal, and prints its report.
 In Claude Code the `meridian-spawn-watch` plugin tells the parent when a child it owes finishes,
 so the parent need not block.
 
 - Kind: module
-- Paths: `src/meridian/lib/ops/spawn/owed.py`, `src/meridian/claude_runtime/meridian-spawn-watch`
+- Paths: `src/meridian/lib/ops/spawn/wait.py`, `src/meridian/lib/ops/spawn/owed.py`, `src/meridian/claude_runtime/meridian-spawn-watch`

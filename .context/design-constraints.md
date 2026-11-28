@@ -88,14 +88,13 @@ caller is refused.
 **How.** `MERIDIAN_SECRET_*` variables never reach a child
 (`env_registry.py`, `lib/launch/env.py`) or a guardrail script
 (`lib/safety/guardrails.py`). Secret-looking arguments are redacted before a command is
-stored (`redact_primary_command`), and telemetry passes through `RedactionPipeline`
-(`lib/extensions/observability.py`). `--from` and `--continue` pass references and
+stored (`redact_primary_command`). `--from` and `--continue` pass references and
 report text, never another session's transcript (`lib/core/context_ref.py`). Turn text
 reaches a notification only when `notify.include_messages` is set.
 
 **Checked by** `tests/integration/harness/test_child_env_boundary.py`, the redaction
 case in `test_pi_integration.py`, and `tests/unit/idle/`.
 
-**Gaps.** Nothing checks guardrail stripping, `config show` redaction or
-`RedactionPipeline`. Idle excerpts sit in plain text in the idle state file, a second
+**Gaps.** Nothing checks guardrail stripping or `config show` redaction. Telemetry has
+no redaction pass: what an event records is up to its emitter. Idle excerpts sit in plain text in the idle state file, a second
 copy of turn text beside the harness's own.

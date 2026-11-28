@@ -177,8 +177,8 @@ def test_lockless_v3_queued_row_not_finalized(
     row = spawn_store.get_spawn(runtime_root, spawn_id)
     assert row is not None and row.runner_pid is None
 
-    from meridian.lib.ops.spawn.api import spawn_show_sync
     from meridian.lib.ops.spawn.models import SpawnShowInput
+    from meridian.lib.ops.spawn.read import spawn_show_sync
 
     shown = spawn_show_sync(SpawnShowInput(spawn_id=spawn_id, project_root=project_root.as_posix()))
     assert is_active_spawn_status(shown.status)

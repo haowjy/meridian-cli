@@ -32,7 +32,6 @@ from meridian.lib.ops.legacy_native_import import (
     retained_chat_facts,
 )
 from meridian.lib.ops.locate import ChatHit, Located, Untracked, locate
-from meridian.lib.ops.runtime import async_from_sync
 from meridian.lib.state import session_store
 from meridian.lib.state.native_binding import Conflict
 from meridian.lib.state.native_identity import (
@@ -389,13 +388,9 @@ def _bind(
     )
 
 
-session_repair = async_from_sync(repair_session_reference_sync)
-
-
 __all__ = [
     "RepairCandidate",
     "SessionRepairInput",
     "SessionRepairOutput",
     "repair_session_reference_sync",
-    "session_repair",
 ]

@@ -7,7 +7,8 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from meridian.lib.ops.spawn.api import SpawnListInput, spawn_list_sync
+from meridian.lib.ops.spawn.models import SpawnListInput
+from meridian.lib.ops.spawn.read import spawn_list_sync
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import acquire, lock_path
 from meridian.lib.state.machine_ids import allocate

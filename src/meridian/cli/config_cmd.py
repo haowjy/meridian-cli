@@ -8,7 +8,7 @@ from cyclopts import App
 from meridian.cli.ext_registration import register_extension_cli_group
 from meridian.cli.invocation import Emitter, emit
 from meridian.cli.utils import cli_project_root_posix
-from meridian.lib.extensions.registry import get_first_party_registry
+from meridian.lib.extensions.registry import get_command_registry
 from meridian.lib.ops.config import (
     ConfigGetInput,
     ConfigResetInput,
@@ -40,7 +40,7 @@ def register_config_commands(app: App) -> None:
     }
     register_extension_cli_group(
         app,
-        registry=get_first_party_registry(),
+        registry=get_command_registry(),
         group="config",
         handlers=handlers,
     )

@@ -14,7 +14,7 @@ from pathlib import Path
 import psutil
 import pytest
 
-import meridian.lib.ops.spawn.api as spawn_api
+import meridian.lib.ops.spawn.control as spawn_control
 from meridian.lib.core.types import SpawnId
 from meridian.lib.ops.spawn.models import SpawnCancelInput
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
@@ -43,11 +43,11 @@ def _patch_spawn_cancel_runtime_resolution(
     runtime_root: Path,
 ) -> None:
     monkeypatch.setattr(
-        "meridian.lib.ops.spawn.api.resolve_runtime_root_and_config",
+        "meridian.lib.ops.spawn.control.resolve_runtime_root_and_config",
         lambda _project_root: (runtime_root, object()),
     )
     monkeypatch.setattr(
-        "meridian.lib.ops.spawn.api.resolve_runtime_root",
+        "meridian.lib.ops.spawn.control.resolve_runtime_root",
         lambda _project_root: runtime_root,
     )
 
@@ -219,7 +219,7 @@ def test_spawn_cancel_refuses_live_managed_primary_without_force(
         lambda pid, birth: pid == 8101 and birth == 8101.0,
     )
 
-    output = spawn_api.spawn_cancel_sync(
+    output = spawn_control.spawn_cancel_sync(
         SpawnCancelInput(
             spawn_id=spawn_id,
             project_root=tmp_path.as_posix(),
@@ -267,7 +267,7 @@ def test_spawn_cancel_refuses_process_verified_live_primary_without_readable_lea
         lambda pid, birth: pid == 8201 and birth == 8201.0,
     )
 
-    output = spawn_api.spawn_cancel_sync(
+    output = spawn_control.spawn_cancel_sync(
         SpawnCancelInput(
             spawn_id=spawn_id,
             project_root=tmp_path.as_posix(),
@@ -317,7 +317,7 @@ def test_spawn_cancel_allows_forced_or_dead_managed_primary(
     monkeypatch.setattr("meridian.lib.spawn.service._CANCEL_GRACE_SECS", 0.01)
     monkeypatch.setattr("meridian.lib.spawn.service._CANCEL_KILL_SECS", 0.01)
 
-    output = spawn_api.spawn_cancel_sync(
+    output = spawn_control.spawn_cancel_sync(
         SpawnCancelInput(
             spawn_id=spawn_id,
             project_root=tmp_path.as_posix(),
@@ -358,7 +358,7 @@ def test_spawn_cancel_returns_promptly_when_managed_primary_is_already_dead(
     )
 
     started = time.monotonic()
-    output = spawn_api.spawn_cancel_sync(
+    output = spawn_control.spawn_cancel_sync(
         SpawnCancelInput(
             spawn_id=spawn_id,
             project_root=tmp_path.as_posix(),
@@ -394,7 +394,7 @@ def test_spawn_cancel_managed_primary_without_runner_converges_to_terminal(
     monkeypatch.setattr("meridian.lib.spawn.service._CANCEL_KILL_SECS", 0.01)
     terminated_pids = recording_managed_primary_terminations(monkeypatch)
 
-    output = spawn_api.spawn_cancel_sync(
+    output = spawn_control.spawn_cancel_sync(
         SpawnCancelInput(
             spawn_id=spawn_id,
             project_root=tmp_path.as_posix(),

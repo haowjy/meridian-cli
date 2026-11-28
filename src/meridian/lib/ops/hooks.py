@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -520,22 +519,6 @@ def hooks_resolve_sync(payload: HookResolveInput) -> HookResolveOutput:
     )
 
 
-async def hooks_list(payload: HookListInput) -> HookListOutput:
-    return await asyncio.to_thread(hooks_list_sync, payload)
-
-
-async def hooks_check(payload: HookCheckInput) -> HookCheckOutput:
-    return await asyncio.to_thread(hooks_check_sync, payload)
-
-
-async def hooks_run(payload: HookRunInput) -> HookRunOutput:
-    return await asyncio.to_thread(hooks_run_sync, payload)
-
-
-async def hooks_resolve(payload: HookResolveInput) -> HookResolveOutput:
-    return await asyncio.to_thread(hooks_resolve_sync, payload)
-
-
 __all__ = [
     "HookCheckInput",
     "HookCheckItem",
@@ -549,12 +532,8 @@ __all__ = [
     "HookRunInput",
     "HookRunOutput",
     "HookRunResult",
-    "hooks_check",
     "hooks_check_sync",
-    "hooks_list",
     "hooks_list_sync",
-    "hooks_resolve",
     "hooks_resolve_sync",
-    "hooks_run",
     "hooks_run_sync",
 ]
