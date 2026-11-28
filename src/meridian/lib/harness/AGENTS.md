@@ -42,7 +42,7 @@ half-initialized module. A `SpawnParams` field an adapter ignores must be listed
   can't recreate a deleted spawn directory.
 - **Pi's completion engine lives here** (`pi_drain.py`, `pi_completion_profile.py`,
   `pi_quiescence.py`, `pi_work_ledger.py`, `pi_lifecycle_tracker.py`, `pi_disk_watcher.py`,
-  `pi_drain_teardown.py`), built on `lib/streaming/`'s completion contracts and reached only
+  `pi_drain_teardown.py`), built on `lib/streaming/`'s completion contracts; production code reaches it only
   through `PiRpcConnection.drain_plan`. Rules: [Pi drain](.context/pi-drain.md).
 - **Pi usage is per assistant message**: fold each `message_end` once, because
   `agent_end.messages` repeats history.
