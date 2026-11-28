@@ -73,12 +73,11 @@ from .roots import resolve_caller_spawn_id, resolve_spawn_read_authority
 
 
 def _surface_primary_activity(status: str, activity: str | None) -> str | None:
-    normalized = (activity or "").strip()
-    if not normalized:
-        return None
+    """A running primary's activity; ``unknown`` while its harness has reported none."""
+
     if not is_active_spawn_status(status):
         return None
-    return normalized
+    return (activity or "").strip() or "unknown"
 
 
 def _chat_work_ids(runtime_root: Path, rows: Sequence[SpawnRecord]) -> dict[str, str | None]:
@@ -165,7 +164,9 @@ def _list_entries(
                 spawn_id=row.id,
                 status=row.status,
                 status_display=(
-                    f"{row.status} ({surfaced_activity})" if surfaced_activity is not None else None
+                    f"{row.status} ({surfaced_activity})"
+                    if surfaced_activity not in {None, "unknown"}
+                    else None
                 ),
                 model=row.model or "",
                 agent=row.agent or None,
@@ -542,7 +543,9 @@ def spawn_show_sync(
         include_report_body=payload.include_report_body,
         runtime_root=runtime_root,
     )
-    surfaced_activity = _surface_primary_activity(row.status, activity)
+    surfaced_activity = (
+        _surface_primary_activity(row.status, activity) if kind == "primary" else None
+    )
     # The chat's current item, which `work start`/`switch` may have changed since launch.
     chat_id = row.entry_chat_id
     current_work = (

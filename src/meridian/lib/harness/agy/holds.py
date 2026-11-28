@@ -393,6 +393,7 @@ async def _run_idle(
     from meridian.lib.core.types import HarnessId
     from meridian.lib.harness.idle_types import SidecarContext
     from meridian.lib.launch.hold_idle import run_hold_idle
+    from meridian.lib.state.primary_meta import record_turn_activity
 
     try:
         ctx = SidecarContext(
@@ -404,7 +405,10 @@ async def _run_idle(
         )
         await run_hold_idle(
             lambda stored_turn_id: AgyIdleSensor(
-                proc_dir, conversation, stored_turn_id=stored_turn_id
+                proc_dir,
+                conversation,
+                stored_turn_id=stored_turn_id,
+                report_activity=lambda activity: record_turn_activity(launch, activity),
             ),
             ctx,
             readopted=readopted,

@@ -373,7 +373,7 @@ def test_prompts_are_queued_with_no_sender_only_while_a_watcher_runs(agy_home: P
 
     FAR = 2**62
     proc = agy_home / "proc"
-    sensor = AgyIdleSensor(proc, "c1", stored_turn_id=None)
+    sensor = AgyIdleSensor(proc, "c1", stored_turn_id=None, report_activity=lambda _activity: None)
 
     # No watcher: it could not wake the session, so nothing is queued and nothing delivered.
     assert asyncio.run(sensor.send("reminder", stop_offered=False, expires_at=FAR)) is False
