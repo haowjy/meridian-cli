@@ -29,18 +29,14 @@ the store `root` names (`BootstrapRegistry`), since Mars reports no path for the
 init` reports content from `mars list --json` and runs `mars init`, a no-op on an existing
 project, instead of checking for `mars.toml` itself.
 
-`~/.meridian/mars` (`LegacyUserRoot`) is the one exception for one minor release: Meridian
-reads its `mars.toml` only to decide whether it still holds items, and if so passes it as
-`--fallback-root` and warns once per process with the steps to move it
-(`LegacyUserRoot.migration_message`): each dependency as the `meridian mars --user add` that
-recreates it with its version and filters, or, for a key `add` can't set, the entry to copy;
-`.mars-src/` to the user level's, then `meridian mars --user sync` to install it;
-`[settings]`/`[models]`/`[agents]`/`[skills]` to Mars's user `config.toml`. Doctor's
-`legacy_user_mars_root` and the lookup warning are the same text from `legacy_user_root`, which
-asks Mars for the user level (`mars_user_level`) so the steps name real paths. The delete step
-says to keep the folder while a rollback to Meridian 0.28 may still need it. A `mars.toml` it
-can't read stays active so Mars reports it, and the warning says it can't be read. Removal is
-in `TODO`.
+`~/.meridian/mars` (`legacy_user_root`) is the one exception for one minor release: while the
+folder exists, lookups pass it as `--fallback-root` and warn once per process, and doctor
+reports it as `legacy_user_mars_root`, both with `legacy_user_root_message`, which names the
+migration script (`scripts/migrate-to-dot-mars.py`, run by `uv` from its URL on `main`).
+Meridian doesn't read the folder: Mars ignores a fallback with no `mars.toml` and turns an
+unloadable lock into a warning. Moving it is the script's job, not Meridian's, so the product
+carries no move steps; the script is not in the wheel and nothing imports it. A file or broken
+symlink in its place is not a folder and is ignored. Removal is in `TODO`.
 
 ## Models
 
@@ -68,7 +64,7 @@ the file Mars chose (`parse_agent_profile` on the bundle's `agent_source_path`, 
 `mars agents show` through `ops/mars.py` where no bundle is built). A second lookup could
 pick a different file than the one that runs. Mars reads profile skills when building the
 launch bundle for the same reason. Every by-name call to Mars sends `mars_content_args`
-(`mars_cli.py`): the legacy `~/.meridian/mars` as `--fallback-root` while it holds items, then
+(`mars_cli.py`): the legacy `~/.meridian/mars` as `--fallback-root` while it exists, then
 this build's bundle directory as `--provided-root`. A missing agent is `MarsAgentNotFoundError` on every path (spawn,
 `--fork`, configured default) and carries Mars's message; Meridian adds only a hint that
 holds for every layer. Meridian never words its own guess at which layer was searched.

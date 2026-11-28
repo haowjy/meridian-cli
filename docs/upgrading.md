@@ -12,7 +12,7 @@ directory and names its project only as where Mars's walk-up starts. Mars takes 
 project `mars.toml`, else the user level for a lookup. Your home
 directory's `mars.toml` is never a project any more; Mars warns where it finds one and its
 [guide](https://github.com/haowjy/mars-agents/blob/main/docs/cli/user-level.md#moving-a-home-project)
-says how to move it.
+says how to move it. The migration script below does those steps for you.
 
 - **`meridian mars --user …` addresses the Mars user level**, forwarded as `mars --user …`,
   instead of Meridian's own project at `~/.meridian/mars`. A Mars older than 0.41.0 on `PATH`
@@ -22,16 +22,45 @@ says how to move it.
   both have) and keeps them out of its commits. Run it once in each project after moving your
   packages. Outside any project, launches read the user level's store; it never restricts which
   harness a launch uses.
-- **Move what `~/.meridian/mars` holds.** Meridian never deletes it. While its `mars.toml`
-  declares a dependency or it has a `.mars-src/`, this release still reads it (as Mars's
-  deprecated `--fallback-root`). Every command that asks Mars for agents or skills (launches,
-  `config show`, `context`, `doctor`, `meridian mars agents` and `skills`) warns once, listing `meridian mars --user add <source>` for each dependency with its version and filters,
-  and the `meridian mars` lookups also print Mars's own line that `--fallback-root` is
-  deprecated. Run the `add`s, move `.mars-src/` into your user level's
-  `.mars-src/` and any `[settings]`, `[models]` or `[agents]` into Mars's user `config.toml`,
-  and run `meridian mars --user sync`. Then delete `~/.meridian/mars`, but only once you no
-  longer need to roll back to Meridian 0.28 (see Rollback). When it holds nothing,
-  `meridian doctor` says it can be deleted. The next minor release stops reading it.
+- **Move what `~/.meridian/mars` holds with the migration script.** Meridian never deletes or
+  writes that folder. While it exists, this release still reads it (as Mars's deprecated
+  `--fallback-root`), and every command that asks Mars for agents or skills (launches,
+  `config show`, `context`, `doctor`, `meridian mars agents`) warns once that the next minor
+  release stops reading it; the `meridian mars` lookups also print Mars's own line that
+  `--fallback-root` is deprecated. Run the script that moves an old setup into the Mars user
+  level:
+
+  ```bash
+  uv run https://raw.githubusercontent.com/haowjy/meridian-cli/main/scripts/migrate-to-dot-mars.py
+  ```
+
+  It needs Mars 0.41.0 or later (Meridian 0.29.0 or later bundles it). On its own it is a dry
+  run: it prints each step with its real paths and changes nothing. Add `--apply` to run the
+  steps; it stops at the first one that fails and says what to fix, and a re-run skips what is
+  already done. Before it changes anything, it copies every path it will move, rewrite or
+  delete, including the harness config files whose hook and MCP entries it unlinks, into a new
+  folder, `~/.mars-migration-backup/<UTC time>/`. A folder still named `….partial` belongs to a
+  run that stopped while copying and changed nothing. It moves:
+  - an old Mars home project (`~/mars.toml`, `~/mars.local.toml`, `~/mars.lock`, and its store
+    in `~/.mars`): it runs `mars --root ~ unlink` for each target the project's locks record,
+    carries both manifests (without `targets`, relative paths made absolute) into the user
+    level's `mars.toml` and `mars.local.toml` and `~/.mars-src` into the user level's
+    `.mars-src/`, then deletes the old files;
+  - Mars 0.40's `config.toml` and `curated.toml` into the user level, from where Mars 0.40 read
+    them: `$MARS_CONFIG_DIR`, else `$XDG_CONFIG_HOME/mars/` or `~/.config/mars/` on Linux and
+    `~/Library/Application Support/mars/` on macOS (Mars 0.40 ignored `XDG_CONFIG_HOME` there).
+    A macOS `~/.config/mars/` file, which Mars never read, moves only into a user level that has
+    none, with a note that its settings never applied;
+  - `~/.meridian/mars`: its dependencies into the user level's `mars.toml`, its `.mars-src/`
+    into the user level's, and its `[settings]`, `[models]`, `[agents]` and `[skills]` into
+    Mars's user `config.toml`; then it deletes the folder, which the backup keeps.
+
+  It honors `MARS_HOME`. Before changing anything it has Mars validate the files it would
+  write, and it stops when both sides hold one name (a dependency, a `.mars-src/` item, a
+  config key, `curated.toml`) with different content; the same content on both sides is kept
+  once. It then runs `mars --user sync` and ends with what to do next: `meridian mars sync` in
+  each project, and any symlink under `~/.local/bin` whose target is gone, with the
+  `ln -sfn` that points it at the user level's copy.
 - **Meridian's skills are read in place.** `meridian skills` reads the installed Meridian
   package only and no longer asks Mars to copy skills into `.mars/skills/`; launches read the
   bundle directly. Every passthrough command that syncs (`sync`, `add`, `link`, `upgrade`, …)
@@ -45,11 +74,23 @@ says how to move it.
   `mars_root` and `mars_scope` stay; with Mars unavailable they, `mars`, and doctor's
   `agents_dir`/`skills_dir` are `null`.
   Doctor no longer reports `missing_skills_directories` or
-  `missing_agent_profile_directories`; it reports `legacy_user_mars_root` (payload `path` and
-  `steps`), and `mars_unavailable` with Mars's own error when Mars can't say which root it uses
+  `missing_agent_profile_directories`; it reports `legacy_user_mars_root` (payload `path`, with
+  the same message as the lookup warning), and `mars_unavailable` with Mars's own error when Mars can't say which root it uses
   (`config show` adds that error as `mars_error`).
-- **Rollback.** Both rollbacks go back to `~/.meridian/mars` for your own packages, so keep
-  that folder until you no longer need them.
+- **Rollback.** Both rollbacks go back to `~/.meridian/mars` for your own packages. After the
+  migration script ran, first restore everything it moved from its backup: the commands it
+  prints at the end, which are
+
+  ```bash
+  rm -rf ~/.mars                                    # or $MARS_HOME
+  cp -a ~/.mars-migration-backup/<UTC time>/home/. ~/
+  cp -a ~/.mars-migration-backup/<UTC time>/root/. /    # only if it has root/
+  ```
+
+  using the oldest complete backup when a run was cut short and run again; it holds the setup
+  as it was before the first run. That brings back `~/mars.toml`, `~/mars.lock`, `~/.mars-src`,
+  the old `~/.mars` store, the Mars 0.40 config files, what was unlinked from the harness
+  folders and `~/.meridian/mars`.
   - *To 0.28.1*, which runs Mars 0.41.0: user-level items a project sync installed stay in
     that project. Outside a project, lookups read `~/.meridian/mars` again, so user-level items
     are not found there, and `meridian mars --user …` addresses `~/.meridian/mars` instead of

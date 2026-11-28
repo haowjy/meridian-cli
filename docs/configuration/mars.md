@@ -53,15 +53,12 @@ root, while Meridian's state and work items stay with the outer project.
 ### `~/.meridian/mars`
 
 Before the Mars user level, Meridian kept user packages in its own Mars project at
-`~/.meridian/mars`. Meridian never deletes or writes it. For one minor release, when its
-`mars.toml` declares a dependency or it has a `.mars-src/`, lookups still read it (as Mars's
-deprecated `--fallback-root`) and each command warns once with the `meridian mars --user add`
-line for each dependency, with its version and filters (an entry `add` can't reproduce, such as
-one with `rename`, is to be copied into the user level's `mars.toml`); then delete the folder.
-Its `[settings]`, `[models]` and `[agents]` sections move to Mars's user `config.toml`, which
-every root reads. When it holds nothing, Meridian ignores it and `meridian doctor` says what to
-move before deleting it. A `mars.toml` there that can't be read is reported as such. The next
-minor release stops reading it.
+`~/.meridian/mars`. Meridian never deletes or writes it. For one minor release, while the folder
+exists, lookups still read it (as Mars's deprecated `--fallback-root`), each command warns once,
+and `meridian doctor` reports it as `legacy_user_mars_root`. The next minor release stops
+reading it. To move it, and any older Mars layout, into the user level, run the
+[migration script](../upgrading.md#mars-chooses-the-root-meridianmars-retires): a dry run on its
+own, `--apply` to move.
 
 ## What a package installs
 
