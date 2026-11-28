@@ -159,7 +159,7 @@ def test_stale_session_repair_pid_reuse_result_does_not_kill_scope(
         raise AssertionError("PID-reused scope must not reach the kill primitive")
 
     monkeypatch.setattr(
-        "meridian.lib.core.process_cleanup.terminate_scope_sync",
+        "meridian.lib.spawn.cleanup.terminate_scope_sync",
         _terminate_scope_sync,
     )
 
@@ -199,7 +199,7 @@ def test_stale_session_repair_unknown_birth_does_not_kill_live_scope(
         raise AssertionError("unknown-birth crash repair must not reach the kill primitive")
 
     monkeypatch.setattr(
-        "meridian.lib.core.process_cleanup.terminate_scope_sync",
+        "meridian.lib.spawn.cleanup.terminate_scope_sync",
         _terminate_scope_sync,
     )
 
@@ -236,7 +236,7 @@ def test_live_session_repair_does_not_reclaim_session_owned_scope(
         raise AssertionError("live session scopes must not be reclaimed")
 
     monkeypatch.setattr(
-        "meridian.lib.core.process_cleanup.terminate_scope_sync",
+        "meridian.lib.spawn.cleanup.terminate_scope_sync",
         _unexpected_terminate_scope_sync,
     )
 

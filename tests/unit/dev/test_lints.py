@@ -92,7 +92,7 @@ def test_each_lint_reports_the_violation_planted_for_it(tmp_path: Path) -> None:
         'd = os.environ.get("MERIDIAN_CHAT_ID")\n'
         'e = env.get("MERIDIAN_SPAWN_ID")\n',
     )
-    plant("meridian/lib/core/caller.py", 'a = os.environ.get("MERIDIAN_SPAWN_ID", "")\n')
+    plant("meridian/lib/state/caller.py", 'a = os.environ.get("MERIDIAN_SPAWN_ID", "")\n')
     sources = read_sources(tmp_path)
 
     assert [(v.path, v.line) for v in caller_env_read_violations(sources)] == [

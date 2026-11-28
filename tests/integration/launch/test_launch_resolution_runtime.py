@@ -14,6 +14,10 @@ from meridian.lib.core.caller_boundary import (
     current_pid_namespace,
 )
 from meridian.lib.core.context_ref import SpawnContextRef
+from meridian.lib.core.permission_policy import (
+    Host,
+    Hosts,
+)
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.bundle import project_effective_policy
 from meridian.lib.harness.registry import (
@@ -27,10 +31,6 @@ from meridian.lib.launch.plan import (
     build_primary_spawn_request,
 )
 from meridian.lib.launch.types import LaunchRequest
-from meridian.lib.safety.policy import (
-    Host,
-    Hosts,
-)
 from meridian.lib.state import work_repository
 from tests.support.fixtures import write_agent
 from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve

@@ -9,9 +9,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from meridian.lib.core.delivery import DeliveryKind, MessageRoute, MessageSender, TransportDead
-from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES, SpawnStatus
 from meridian.lib.core.event_hooks import run_event_hooks
-from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import (
     RawHarnessEvent,
@@ -26,10 +25,10 @@ from meridian.lib.harness.semantics import NormalizedHarnessEvent, normalize_eve
 from meridian.lib.idle.delivery import end_stretch_on_delivery
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.platform.process_scope.base import POST_KILL_WAIT_SECS
+from meridian.lib.spawn.cleanup import terminate_spawn_scopes
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import LaunchPaths
 from meridian.lib.state.spawn_signals import write_accepted_signals
-from meridian.lib.state.spawn_tree import terminate_recorded_spawn_scope
 from meridian.lib.streaming.completion_contracts import CompletionCleanupRequest
 from meridian.lib.streaming.control_socket import ControlSocketServer, control_socket_path
 from meridian.lib.streaming.drain_coordinator import DrainPlan
@@ -53,13 +52,13 @@ ControlServerFactory = Callable[[SpawnId, Path, "SpawnManager"], ControlSocketSe
 
 
 if TYPE_CHECKING:
-    from meridian.lib.core.spawn_service import SpawnApplicationService
     from meridian.lib.harness.connections.base import (
         ConnectionConfig,
         HarnessConnection,
     )
     from meridian.lib.harness.semantics import TerminalEventOutcome
     from meridian.lib.observability.debug_tracer import DebugTracer
+    from meridian.lib.spawn.service import SpawnApplicationService
 
 logger = logging.getLogger(__name__)
 EventHook = Callable[[RawHarnessEvent], None]
@@ -544,7 +543,7 @@ class SpawnManager:
             record = spawn_store.get_spawn(self._runtime_root, spawn_id)
             if record is None:
                 return
-            terminate_recorded_spawn_scope(
+            terminate_spawn_scopes(
                 self._runtime_root,
                 record,
                 reason="stop_spawn",

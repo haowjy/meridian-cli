@@ -8,11 +8,11 @@ from uuid import uuid4
 
 import structlog
 
-from meridian.lib.core.caller import caller_in
-from meridian.lib.core.lifecycle import get_hook_dispatcher
-from meridian.lib.core.resolved_context import ResolvedContext
+from meridian.lib.context.resolved import ResolvedContext
+from meridian.lib.hooks.dispatch import get_hook_dispatcher
 from meridian.lib.launch.session_links import Execution, execution_of, publish_chat_links
 from meridian.lib.state import session_store, work_repository, work_store
+from meridian.lib.state.caller import caller_in
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.work_state import slugify
 from meridian.lib.telemetry import emit_telemetry

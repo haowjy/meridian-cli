@@ -5,10 +5,10 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.core.domain import PrimarySessionMetadata
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.request import SessionRequest, SpawnRequest, is_exact_continue_session
 from meridian.lib.launch.session_scope import SessionAttempt, session_scope, warm_close_imports
-from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import session_store
 from meridian.lib.state.launch_lock import LaunchSlot
 

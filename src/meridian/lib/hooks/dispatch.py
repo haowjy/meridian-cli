@@ -8,11 +8,13 @@ from typing import Protocol, cast
 
 import structlog
 
+from meridian.env_registry import env_toward_project
 from meridian.lib.core.domain import TerminalSpawnStatus
-from meridian.lib.core.lifecycle import LifecycleEvent, LifecycleHook
 from meridian.lib.hooks.builtin import BUILTIN_HOOKS
 from meridian.lib.hooks.builtin.base import BuiltinHook
+from meridian.lib.hooks.config import load_hooks_config_report
 from meridian.lib.hooks.interval import IntervalTracker
+from meridian.lib.hooks.registry import HookRegistry
 from meridian.lib.hooks.runner import ExternalHookRunner
 from meridian.lib.hooks.types import (
     EVENTS,
@@ -23,6 +25,8 @@ from meridian.lib.hooks.types import (
     SpawnStatus,
     hooks_dispatch_enabled,
 )
+from meridian.lib.spawn.lifecycle import LifecycleEvent, LifecycleHook
+from meridian.lib.state.caller import caller_runtime_root, same_runtime_root
 from meridian.plugin_api import Hook as PluginHook
 
 
@@ -341,3 +345,45 @@ def _to_plugin_hook(hook: Hook) -> PluginHook:
         options=hook.options,
         remote=hook.remote,
     )
+
+
+def _hook_env(project_root: Path, runtime_root: Path) -> Mapping[str, str] | None:
+    """The environment hooks run in: the process's, unless this dispatch is into another
+    project, where it is what ``-C`` into that project would leave (the caller's spawn,
+    chat and work names don't mean anything there)."""
+
+    caller_root = caller_runtime_root()
+    if caller_root is None or same_runtime_root(caller_root, runtime_root):
+        return None
+    return env_toward_project(os.environ, project_root)
+
+
+def get_hook_dispatcher(project_root: Path, runtime_root: Path) -> HookDispatcher | None:
+
+    if not hooks_dispatch_enabled():
+        return None
+
+    try:
+        loaded_hooks = load_hooks_config_report(project_root)
+        if loaded_hooks.errors:
+            logger.warning(
+                "Dropped invalid hook rows; continuing with valid lifecycle hooks.",
+                error="; ".join(loaded_hooks.errors),
+            )
+        return HookDispatcher(
+            project_root,
+            runtime_root,
+            registry=HookRegistry(loaded_hooks.config),
+            env=_hook_env(project_root, runtime_root),
+        )
+    except ValueError as exc:
+        logger.warning(
+            "Invalid hook config; continuing without lifecycle hook dispatch.",
+            error=str(exc),
+        )
+        return None
+    except Exception:
+        logger.exception(
+            "Failed to build hook dispatcher; continuing without lifecycle hook dispatch."
+        )
+        return None

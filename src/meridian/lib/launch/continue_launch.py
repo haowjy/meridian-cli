@@ -1,18 +1,13 @@
 from __future__ import annotations
 
 import os
-import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
 
-import psutil
-
-from meridian.lib.core.spawn_lifecycle import is_terminal_spawn_status
+from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
+from meridian.lib.core.domain import is_terminal_spawn_status
 from meridian.lib.harness.plugin_hosted import is_plugin_hosted
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.platform.process_scope.base import birth_time_unverified
-from meridian.lib.platform.process_scope.dispatch import terminate_scope_sync
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import (
     Busy,
@@ -24,25 +19,17 @@ from meridian.lib.state.launch_lock import (
     lock_path,
     shared_try,
 )
-from meridian.lib.state.liveness import is_process_alive_with_birth, is_process_dead_with_birth
-from meridian.lib.state.managed_primary import terminate_managed_primary_processes
-from meridian.lib.state.paths import LaunchPaths, RuntimePaths
-from meridian.lib.state.primary_meta import PrimaryMetadata, read_primary_metadata
-from meridian.lib.state.process_scope_projection import mark_scope_released, read_scope_projection
-from meridian.lib.state.reaper import resolve_cleanup_claim
-from meridian.lib.state.reaper_cleanup_claim import read_cleanup_claim
+from meridian.lib.state.liveness import is_process_dead_with_birth
+from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.session_identity import chat_owner_spawn
 from meridian.lib.state.session_store import chat_lock
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import (
-    Applied,
     read_state,
     spawn_lock_path,
 )
-from meridian.lib.state.spawn_status import derive, is_live, legacy_runner_alive
+from meridian.lib.state.spawn_status import is_live, legacy_runner_alive
 from meridian.plugin_api.types import SpawnKind
-
-_TEARDOWN_GRACE_SECS = 5.0
 
 
 @dataclass(frozen=True)
@@ -98,55 +85,6 @@ def _busy_error(
     )
 
 
-def _unknown_scope_gone(pid: int, pgid: int | None) -> bool:
-    # Signal 0 only. Permission errors and zombies are not proof of absence.
-    if psutil.pid_exists(pid):
-        return False
-    return pgid is None or _group_gone(pgid)
-
-
-def _group_gone(pgid: int) -> bool:
-    try:
-        os.killpg(pgid, 0)
-    except ProcessLookupError:
-        return True
-    except PermissionError:
-        return False
-    return False
-
-
-def _sweep_scopes(launch: LaunchPaths, spawn_id: str) -> None:
-    """Stop every scope the last launch left, or refuse: containment needs proof, not a guess."""
-    projection = read_scope_projection(launch)
-    for scope in projection.scopes:
-        if scope.release_id in projection.released_ids:
-            continue
-        if birth_time_unverified(scope.root_created_at_epoch):
-            if not _unknown_scope_gone(scope.root_pid, scope.pgid):
-                raise ValueError(
-                    f"Cannot safely sweep PID {scope.root_pid} with unknown birth; "
-                    f"use --fork {spawn_id} to branch without touching it"
-                )
-        else:
-            result = terminate_scope_sync(scope, grace_seconds=5.0, reason="continue_sweep")
-            if not result.resolved:
-                raise ValueError(
-                    f"Cannot safely sweep PID {scope.root_pid}: {result.skip_reason}; "
-                    f"use --fork {spawn_id}"
-                )
-            # A PID cannot be reused while it is still a process-group ID.
-            # Other groups need their own absence proof; never signal them.
-            if (
-                result.skip_reason == "pid_reuse_detected"
-                and scope.pgid not in (None, scope.root_pid)
-                and not _group_gone(scope.pgid)
-            ):
-                raise ValueError(
-                    f"Cannot safely sweep live group {scope.pgid}; use --fork {spawn_id}"
-                )
-        mark_scope_released(launch, scope.release_id)
-
-
 def resolve_continue_target(
     runtime_root: Path,
     named: SpawnRecord,
@@ -187,71 +125,6 @@ def resolve_continue_target(
     return target, notice
 
 
-def _finish_last_launch(
-    project_root: Path, runtime_root: Path, handle: LaunchHandle
-) -> SpawnRecord:
-    """Step 3: with the lock held, no runner of the last launch is alive. End it."""
-    from meridian.lib.bootstrap.services import build_spawn_lifecycle_service_from_roots
-
-    spawn_id = str(handle.spawn_id)
-    spawns_dir = runtime_root / "spawns"
-    row = read_state(spawns_dir, spawn_id, include_prompt=False)
-    if row is None:
-        raise NotFound(f"Spawn '{spawn_id}' not found")
-    launch = LaunchPaths.for_row(runtime_root, row)
-    if row.terminal is None:
-        derived = derive(runtime_root, row)
-        terminal = derived.terminal
-        assert terminal is not None
-        outcome = build_spawn_lifecycle_service_from_roots(project_root, runtime_root).finalize(
-            spawn_id,
-            cast("spawn_store.TerminalSpawnStatus", derived.status),
-            terminal.exit_code,
-            origin=terminal.origin,
-            error=terminal.error,
-            finished_at=terminal.finished_at,
-            expected_n=row.launch_number,
-        )
-        if not isinstance(outcome, Applied):
-            raise ValueError(f"{spawn_id} changed while it was being continued; retry")
-        row = outcome.after
-    # A claim records processes of the last launch whatever ended it; none may reach the next.
-    if read_cleanup_claim(runtime_root, spawn_id):
-        resolve_cleanup_claim(runtime_root, row)
-        if read_cleanup_claim(runtime_root, spawn_id):
-            raise ValueError(
-                f"{spawn_id} has processes from its last run that could not be stopped; "
-                "run `meridian doctor`"
-            )
-    # A managed primary's backend and TUI belong to its session, whose runner is dead.
-    metadata = read_primary_metadata(launch)
-    terminate_managed_primary_processes(metadata, include_launcher=False)
-    _sweep_scopes(launch, spawn_id)
-    _require_managed_processes_gone(metadata, spawn_id)
-    return row
-
-
-def _require_managed_processes_gone(metadata: PrimaryMetadata | None, spawn_id: str) -> None:
-    """The backend and TUI were signalled by exact birth; the next launch needs them gone."""
-    if metadata is None or not metadata.managed_backend:
-        return
-    survivors = (
-        (metadata.backend_pid, metadata.backend_birth_epoch),
-        (metadata.tui_pid, metadata.tui_birth_epoch),
-    )
-    deadline = time.monotonic() + _TEARDOWN_GRACE_SECS
-    while time.monotonic() < deadline:
-        if not any(
-            pid is not None and is_process_alive_with_birth(pid, birth) for pid, birth in survivors
-        ):
-            return
-        time.sleep(0.05)
-    raise ValueError(
-        f"{spawn_id} has processes from its last run that could not be stopped; "
-        "run `meridian doctor`"
-    )
-
-
 def begin_continue(
     *,
     project_root: Path,
@@ -280,7 +153,9 @@ def begin_continue(
         raise _busy_error(runtime_root, spawn_id, chat_id, caller_spawn_id) from exc
     slot = LaunchSlot(handle)
     try:
-        row = _finish_last_launch(project_root, runtime_root, handle)
+        row = build_spawn_application_service_from_roots(
+            project_root, runtime_root
+        ).finish_last_launch(handle)
         if parent_id != row.parent_id:
             spawn_store.reject_continue_cycle(
                 RuntimePaths.from_root_dir(runtime_root).spawns_dir, spawn_id, parent_id

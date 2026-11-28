@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, TypedDict
 
-from meridian.lib.core.spawn_lifecycle import FAILURE_SPAWN_STATUSES
+from meridian.lib.core.domain import FAILURE_SPAWN_STATUSES
 
 VALID_DOMAINS = frozenset({"spawn", "chat", "server", "work", "runtime", "usage"})
 VALID_SEVERITIES = frozenset({"debug", "info", "warning", "error"})

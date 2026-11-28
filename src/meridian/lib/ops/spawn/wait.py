@@ -14,14 +14,14 @@ from meridian.lib.bootstrap.services import (
     RuntimeReadContext,
 )
 from meridian.lib.config.models import MeridianConfig
-from meridian.lib.core.context import RuntimeContext
-from meridian.lib.core.sink import NullSink, OutputSink
-from meridian.lib.core.spawn_lifecycle import (
+from meridian.lib.context.runtime import RuntimeContext
+from meridian.lib.core.domain import (
     ACTIVE_SPAWN_STATUSES,
     FAILURE_SPAWN_STATUSES,
     is_active_spawn_status,
     is_terminal_spawn_status,
 )
+from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.ops.locate import (
     resolve_spawn_targets,
 )

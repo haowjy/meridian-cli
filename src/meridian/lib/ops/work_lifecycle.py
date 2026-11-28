@@ -6,7 +6,7 @@ import structlog
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.autosync.clones import require_outside_clone
-from meridian.lib.core.context import RuntimeContext
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.util import FormatContext
 from meridian.lib.launch.session_links import Execution, execution_owners
 from meridian.lib.ops.context import resolve_active_work_scope

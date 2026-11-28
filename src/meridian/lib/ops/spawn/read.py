@@ -8,14 +8,14 @@ from typing import Literal
 from meridian.lib.bootstrap.services import (
     RuntimeReadContext,
 )
-from meridian.lib.core.context import RuntimeContext
-from meridian.lib.core.refs import RefNotFound
-from meridian.lib.core.sink import OutputSink
-from meridian.lib.core.spawn_lifecycle import (
+from meridian.lib.context.runtime import RuntimeContext
+from meridian.lib.core.domain import (
     ACTIVE_SPAWN_STATUSES,
     ALL_SPAWN_STATUSES,
     is_active_spawn_status,
 )
+from meridian.lib.core.refs import RefNotFound
+from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.ops.locate import (
     resolve_spawn_target,

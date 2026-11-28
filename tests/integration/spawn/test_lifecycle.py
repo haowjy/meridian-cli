@@ -9,9 +9,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     import pytest
 
-from meridian.lib.core.lifecycle import LifecycleEvent, SpawnLifecycleService
-from meridian.lib.core.spawn_lifecycle import SpawnReservation
-from meridian.lib.launch.types import PrimarySessionMetadata
+from meridian.lib.core.domain import PrimarySessionMetadata
+from meridian.lib.spawn.lifecycle import LifecycleEvent, SpawnLifecycleService, SpawnReservation
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_lock import LaunchSlot
 
@@ -68,7 +67,7 @@ def test_owner_record_launch_facts_clears_stale_runner_created_epoch_when_pid_re
     assert initial is not None
     assert initial.runner_created_at_epoch == 222.0
 
-    monkeypatch.setattr("meridian.lib.core.lifecycle._pid_created_at_epoch", lambda _pid: None)
+    monkeypatch.setattr("meridian.lib.spawn.lifecycle._pid_created_at_epoch", lambda _pid: None)
     hook.event_types.clear()
     service.record_launch_facts(
         spawn_id,

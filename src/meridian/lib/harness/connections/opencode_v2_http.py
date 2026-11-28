@@ -26,7 +26,6 @@ from typing import ClassVar, cast
 
 import aiohttp
 
-from meridian.lib.core.telemetry import StartupPhase
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.bundle import project_managed_primary_backend_command
 from meridian.lib.harness.connections.base import (
@@ -55,6 +54,7 @@ from meridian.lib.harness.projections.project_opencode_streaming import (
 )
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.telemetry.lifecycle import StartupPhase
 
 logger = logging.getLogger(__name__)
 

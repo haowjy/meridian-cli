@@ -11,7 +11,7 @@ from typing import Any
 import structlog
 
 from meridian.lib.config.project_paths import resolve_project_config_paths
-from meridian.lib.core.context import RuntimeContext
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.context_ref import context_ref_values
 from meridian.lib.launch.context import PreparedLaunchSurface
 from meridian.lib.launch.continue_launch import ContinueHold

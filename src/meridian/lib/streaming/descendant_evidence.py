@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from meridian.lib.core.spawn_lifecycle import is_active_spawn_status, is_terminal_spawn_status
+from meridian.lib.core.domain import is_active_spawn_status, is_terminal_spawn_status
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.pi_private_state import read_pi_consumption_state
 from meridian.lib.state import spawn_store

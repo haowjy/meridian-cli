@@ -9,7 +9,7 @@ import pytest
 
 import meridian.lib.ops.spawn.control as spawn_control
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
-from meridian.lib.core.context import RuntimeContext
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
 from meridian.lib.launch.report import extract_or_fallback_report

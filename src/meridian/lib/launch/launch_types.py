@@ -19,9 +19,9 @@ from meridian.lib.core.execution_policy import (
 from meridian.lib.core.execution_policy import (
     ResolvedExecutionPolicy as ResolvedExecutionPolicy,
 )
-from meridian.lib.core.native_identity import NativeIdentity
 from meridian.lib.core.overrides import AutocompactPctValue, AutocompactValue
-from meridian.lib.safety.policy import PermissionPolicy
+from meridian.lib.core.permission_policy import PermissionPolicy
+from meridian.lib.state.native_identity import NativeIdentity
 
 if TYPE_CHECKING:
     from meridian.lib.core.types import HarnessId

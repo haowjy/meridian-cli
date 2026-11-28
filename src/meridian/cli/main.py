@@ -85,7 +85,6 @@ from meridian.cli.startup.policy import (
 from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
 from meridian.cli.utils import parse_csv_list
 from meridian.env_registry import project_scoped_env_names
-from meridian.lib.core.caller import caller_spawn_id
 from meridian.lib.core.depth import is_managed_meridian_session, is_root_side_effect_process
 from meridian.lib.core.logging import warning_cache_scope
 from meridian.lib.core.refs import RefNotFound, project_named_scope
@@ -93,6 +92,7 @@ from meridian.lib.core.types import harness_choices_text
 from meridian.lib.harness.printed import PrintedLaunch, eval_hint
 from meridian.lib.launch.errors import WorkTaskDirMissing
 from meridian.lib.machines.resolve import MachineError, resolve_machine
+from meridian.lib.state.caller import caller_spawn_id
 from meridian.lib.state.project_identity import is_same_project, resolve_project_identity
 from meridian.lib.state.saved_machines import SavedMachine
 from meridian.lib.telemetry import emit_telemetry

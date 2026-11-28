@@ -53,7 +53,7 @@ half-initialized module. A `SpawnParams` field an adapter ignores must be listed
 
 ## `agy/` is hosted by its plugin
 
-Meridian never runs Antigravity. `plugin_hosted.PLUGIN_HOSTED` is the one list of such harnesses;
+Meridian never runs Antigravity. `core/types.PLUGIN_HOSTED` is the one list of such harnesses;
 `HarnessId.launched_by_meridian` derives from it. Because Meridian may not exec it, a launch that
 names it **prints** the command (`meridian agy`, `--harness agy`, `--continue <agy chat>`);
 shortcut names, `--harness` help and streaming serve ask this. The harness's plugin writes the session's row and no Meridian runner exists, so

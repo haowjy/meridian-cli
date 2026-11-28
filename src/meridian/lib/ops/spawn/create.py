@@ -9,8 +9,8 @@ from meridian.lib.bootstrap.services import (
     prepare_for_runtime_write,
 )
 from meridian.lib.config.loader import load_config
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.caller_boundary import CallerBoundaryCheck
-from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.context_ref import context_ref_values
 from meridian.lib.core.depth import max_depth_reached
 from meridian.lib.core.sink import NullSink, OutputSink

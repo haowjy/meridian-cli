@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -10,36 +9,35 @@ from uuid import UUID
 import psutil
 import structlog
 
-from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
-from meridian.lib.core.spawn_lifecycle import (
-    SpawnReservation,
-    is_terminal_spawn_status,
-)
-from meridian.lib.core.telemetry import (
+from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus, is_terminal_spawn_status
+from meridian.lib.core.spawn_start import SpawnStartMetadata
+from meridian.lib.platform.signals import signal_coordinator
+from meridian.lib.state import spawn_store
+from meridian.lib.state.launch_lock import LaunchSlot
+from meridian.lib.state.paths import LaunchPaths
+from meridian.lib.state.session_identity import spawn_owner_chat_id
+from meridian.lib.state.spawn.repository import Applied, Declined
+from meridian.lib.telemetry import LifecycleCorrelation, bind_lifecycle_correlation
+from meridian.lib.telemetry.lifecycle import (
     CORE_EVENTS,
     SpawnFailureCategory,
     allocate_spawn_sequence,
     next_spawn_sequence,
 )
-from meridian.lib.core.telemetry import (
+from meridian.lib.telemetry.lifecycle import (
     LifecycleEvent as TelemetryLifecycleEvent,
 )
-from meridian.lib.launch.signals import signal_coordinator
-from meridian.lib.state.launch_lock import LaunchSlot
-from meridian.lib.state.paths import LaunchPaths
-from meridian.lib.state.session_identity import spawn_owner_chat_id
-from meridian.lib.telemetry import LifecycleCorrelation, bind_lifecycle_correlation
 from meridian.lib.telemetry.observers import notify_observers
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
     from pathlib import Path
 
     from meridian.lib.core.clock import Clock
-    from meridian.lib.core.domain import TokenUsage
-    from meridian.lib.hooks.dispatch import HookDispatcher
+    from meridian.lib.core.domain import PrimarySessionMetadata, TokenUsage
+    from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
     from meridian.lib.state.spawn.model import (
         LaunchMode,
+        PersistedSpawnStatus,
         SpawnOrigin,
         SpawnRecord,
     )
@@ -47,6 +45,32 @@ if TYPE_CHECKING:
     from meridian.plugin_api.types import SpawnKind
 
 logger = structlog.get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class SpawnReservation:
+    chat_id: str | None
+    session_metadata: PrimarySessionMetadata
+    prompt: str
+    owner_chat_id: str | None = None
+    parent_id: str | None = None
+    kind: SpawnKind = "child"
+    metadata: SpawnStartMetadata | None = None
+    desc: str | None = None
+    work_id: str | None = None
+    goal: str | None = None
+    spawn_id: str | None = None
+    harness_session_id: str | None = None
+    control_root: str | None = None
+    task_cwd: str | None = None
+    execution_cwd: str | None = None
+    launch_mode: LaunchMode | None = None
+    worker_pid: int | None = None
+    runner_pid: int | None = None
+    launch_policy_snapshot: LaunchPolicySnapshot | None = None
+    status: SpawnStatus = SpawnStatus.RUNNING
+    started_at: str | None = None
+    clock: Clock | None = None
 
 
 def _pid_created_at_epoch(pid: int | None) -> float | None:
@@ -58,15 +82,7 @@ def _pid_created_at_epoch(pid: int | None) -> float | None:
         return None
 
 
-def _spawn_store() -> Any:
-    # An eager import cycles through state initialization.
-    from meridian.lib.state import spawn_store
-
-    return spawn_store
-
-
 def _locked_mutation_snapshot(outcome: LockedMutationResult) -> SpawnRecord | None:
-    from meridian.lib.state.spawn.repository import Applied, Declined
 
     if isinstance(outcome, Applied):
         return outcome.after
@@ -171,7 +187,7 @@ class SpawnLifecycleService:
     def announce(self, spawn_id: str) -> None:
         """Dispatch spawn.created (a first launch only) and spawn.started for a launch's row."""
         with bind_lifecycle_correlation(self._correlation(operation="announce", spawn_id=spawn_id)):
-            record = _spawn_store().get_spawn(self._runtime_root, spawn_id)
+            record = spawn_store.get_spawn(self._runtime_root, spawn_id)
             if record is None:
                 raise ValueError(f"spawn row not found: {spawn_id}")
             self._record = record
@@ -188,7 +204,7 @@ class SpawnLifecycleService:
             self._correlation(operation="start", spawn_id=reservation.spawn_id)
         ):
             session_metadata = reservation.session_metadata
-            launch = _spawn_store().start_spawn(
+            launch = spawn_store.start_spawn(
                 self._runtime_root,
                 chat_id=reservation.chat_id,
                 owner_chat_id=reservation.owner_chat_id,
@@ -220,7 +236,7 @@ class SpawnLifecycleService:
                 launch_lock=launch_lock,
             )
             allocate_spawn_sequence(str(launch.spawn_id))
-            record = _spawn_store().get_spawn(self._runtime_root, launch.spawn_id)
+            record = spawn_store.get_spawn(self._runtime_root, launch.spawn_id)
             self._record = record
             if dispatch_events:
                 self._dispatch_spawn_started_events(status=reservation.status)
@@ -240,15 +256,15 @@ class SpawnLifecycleService:
         ``desc`` and ``work_id`` replace the spawn's own only when set. Dispatches
         ``spawn.started`` (never ``spawn.created``).
         """
-        store = _spawn_store()
+
         handle = launch_lock.handle
         with bind_lifecycle_correlation(
             self._correlation(operation="reopen", spawn_id=str(handle.spawn_id))
         ):
-            row = store.reopen_spawn(
+            row = spawn_store.reopen_spawn(
                 handle,
                 self._runtime_root,
-                store.LaunchInput(
+                spawn_store.LaunchInput(
                     chat_id=reservation.chat_id,
                     prompt=reservation.prompt,
                     kind=reservation.kind,
@@ -274,9 +290,9 @@ class SpawnLifecycleService:
                 self._dispatch_spawn_started_events(status=row.status)
             return row
 
-    def _dispatch_spawn_started_events(self, *, status: SpawnStatus) -> None:
+    def _dispatch_spawn_started_events(self, *, status: PersistedSpawnStatus) -> None:
         assert self._record is not None
-        if self._record.launch_number == _spawn_store().FIRST_LAUNCH:
+        if self._record.launch_number == spawn_store.FIRST_LAUNCH:
             event = self._build_event("spawn.created", self._record)
             self._dispatch(event)
             self._emit_telemetry_event("spawn.created", self._record)
@@ -301,7 +317,7 @@ class SpawnLifecycleService:
             resolved_runner_created_at_epoch = runner_created_at_epoch
             if runner_pid is not None and resolved_runner_created_at_epoch is None:
                 resolved_runner_created_at_epoch = _pid_created_at_epoch(runner_pid)
-            outcome = _spawn_store().record_spawn_launch_facts(
+            outcome = spawn_store.record_spawn_launch_facts(
                 self._runtime_root,
                 spawn_id,
                 launch_mode=launch_mode,
@@ -320,7 +336,7 @@ class SpawnLifecycleService:
         ):
             self._emit_telemetry_event(
                 "spawn.process_exited",
-                _spawn_store().get_spawn(self._runtime_root, spawn_id),
+                spawn_store.get_spawn(self._runtime_root, spawn_id),
                 payload={"exit_code": exit_code},
             )
 
@@ -357,7 +373,7 @@ class SpawnLifecycleService:
             # Defer termination until the durable outcome and finished hooks land;
             # otherwise a completed launch can read as crashed or miss its hook.
             with signal_coordinator().mask_termination():
-                outcome = _spawn_store().finalize_spawn(
+                outcome = spawn_store.finalize_spawn(
                     self._runtime_root,
                     spawn_id,
                     status,
@@ -371,7 +387,6 @@ class SpawnLifecycleService:
                     expected_n=expected_n,
                     clock=clock,
                 )
-                from meridian.lib.state.spawn.repository import Applied
 
                 if isinstance(outcome, Applied):
                     snapshot = outcome.after
@@ -431,7 +446,7 @@ class SpawnLifecycleService:
     def bootstrap_from_disk(self, spawn_id: str) -> SpawnRecord | None:
         """Load owner state once for workers that did not call start()."""
 
-        self._record = _spawn_store().get_spawn(
+        self._record = spawn_store.get_spawn(
             self._runtime_root,
             spawn_id,
         )
@@ -658,68 +673,3 @@ def _terminal_telemetry_payload(spawn: SpawnRecord) -> dict[str, Any]:
     if terminal.error:
         payload["reason"] = terminal.error
     return payload
-
-
-def _hook_env(project_root: Path, runtime_root: Path) -> Mapping[str, str] | None:
-    """The environment hooks run in: the process's, unless this dispatch is into another
-    project, where it is what ``-C`` into that project would leave (the caller's spawn,
-    chat and work names don't mean anything there)."""
-
-    from meridian.env_registry import env_toward_project
-    from meridian.lib.core.caller import caller_runtime_root, same_runtime_root
-
-    caller_root = caller_runtime_root()
-    if caller_root is None or same_runtime_root(caller_root, runtime_root):
-        return None
-    return env_toward_project(os.environ, project_root)
-
-
-def get_hook_dispatcher(project_root: Path, runtime_root: Path) -> HookDispatcher | None:
-
-    # Imported lazily to avoid lifecycle <-> hooks circular import at module import time.
-    from meridian.lib.hooks.types import hooks_dispatch_enabled
-
-    if not hooks_dispatch_enabled():
-        return None
-
-    try:
-        from meridian.lib.hooks.config import load_hooks_config_report
-        from meridian.lib.hooks.dispatch import HookDispatcher
-        from meridian.lib.hooks.registry import HookRegistry
-
-        loaded_hooks = load_hooks_config_report(project_root)
-        if loaded_hooks.errors:
-            logger.warning(
-                "Dropped invalid hook rows; continuing with valid lifecycle hooks.",
-                error="; ".join(loaded_hooks.errors),
-            )
-        return HookDispatcher(
-            project_root,
-            runtime_root,
-            registry=HookRegistry(loaded_hooks.config),
-            env=_hook_env(project_root, runtime_root),
-        )
-    except ValueError as exc:
-        logger.warning(
-            "Invalid hook config; continuing without lifecycle hook dispatch.",
-            error=str(exc),
-        )
-        return None
-    except Exception:
-        logger.exception(
-            "Failed to build hook dispatcher; continuing without lifecycle hook dispatch."
-        )
-        return None
-
-
-def create_lifecycle_service(
-    project_root: Path,
-    runtime_root: Path,
-) -> SpawnLifecycleService:
-
-    dispatcher = get_hook_dispatcher(project_root, runtime_root)
-    hooks: list[LifecycleHook] | None = [dispatcher] if dispatcher is not None else None
-    return SpawnLifecycleService(
-        runtime_root,
-        hooks=hooks,
-    )

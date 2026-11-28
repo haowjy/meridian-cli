@@ -15,17 +15,7 @@ from dataclasses import dataclass, replace
 from fnmatch import fnmatchcase
 from typing import Literal
 
-from meridian.lib.harness.projections.compaction import compaction_report
-from meridian.lib.harness.projections.native_config import unsupported_native_config_report
-from meridian.lib.harness.projections.network_claude import (
-    CLAUDE_NETWORK_ALLOW_DOMAINS,
-    ClaudeNetworkSettings,
-    claude_network_line,
-    project_claude_network,
-)
-from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.launch.text_utils import dedupe_nonempty, split_csv_entries
-from meridian.lib.safety.policy import (
+from meridian.lib.core.permission_policy import (
     Allow,
     EnforcementReport,
     PermissionPolicy,
@@ -39,7 +29,7 @@ from meridian.lib.safety.policy import (
     rule_element,
     unscoped_action,
 )
-from meridian.lib.tools import (
+from meridian.lib.core.tools import (
     PLATFORM_ORIGIN,
     ToolAction,
     ToolRule,
@@ -47,6 +37,16 @@ from meridian.lib.tools import (
     split_native,
     strictest,
 )
+from meridian.lib.harness.projections.compaction import compaction_report
+from meridian.lib.harness.projections.native_config import unsupported_native_config_report
+from meridian.lib.harness.projections.network_claude import (
+    CLAUDE_NETWORK_ALLOW_DOMAINS,
+    ClaudeNetworkSettings,
+    claude_network_line,
+    project_claude_network,
+)
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.launch.text_utils import dedupe_nonempty, split_csv_entries
 
 type PermissionMode = Literal["acceptEdits", "auto", "manual", "dontAsk"]
 

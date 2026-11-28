@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.bootstrap.services import RuntimeWriteContext, prepare_for_runtime_write
 from meridian.lib.config.project_paths import resolve_project_config_paths
-from meridian.lib.core.context import RuntimeContext
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.domain import Spawn, SpawnStatus
 from meridian.lib.core.types import ModelId, SpawnId
 from meridian.lib.harness.registry import get_default_harness_registry

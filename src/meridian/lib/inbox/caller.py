@@ -12,13 +12,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from meridian.lib.core.caller import caller_runtime_root
 from meridian.lib.inbox.fields import PROJECT_ID_RULE, is_project_id, is_safe_field
 from meridian.lib.inbox.models import Party
 from meridian.lib.inbox.store import InboxError
 from meridian.lib.machines.caller import MachineCaller, is_machine_call, machine_call_caller
 from meridian.lib.message.reply import saved_machine_by_id, way_back
 from meridian.lib.state import spawn_store
+from meridian.lib.state.caller import caller_runtime_root
 from meridian.lib.state.machine_identity import MachineIdentity
 from meridian.lib.state.machine_ids import claim_root
 from meridian.lib.state.project_identity import ADHOC_PROJECT_ID_PREFIX

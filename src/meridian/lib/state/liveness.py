@@ -1,9 +1,11 @@
 import os
 from contextlib import suppress
+from typing import TypedDict
 
 import psutil
 
-from meridian.lib.platform.process_scope.base import birth_time_unverified
+from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot, birth_time_unverified
+from meridian.lib.platform.process_scope.posix import is_pgid_reachable
 
 _PID_REUSE_GUARD_SECS = 30.0
 _BIRTH_TOLERANCE_SECS = 1.0
@@ -74,3 +76,25 @@ def signal_with_birth(
 def is_process_dead_with_birth(pid: int | None, birth_epoch: float | None) -> bool:
     """Inverse of known birth-matched liveness; inaccessible/unknown is not dead."""
     return _process_alive_with_birth(pid, birth_epoch) is False
+
+
+class ScopeLiveness(TypedDict):
+    """Best-effort liveness projection for a process containment scope."""
+
+    root_alive: bool
+    pgid_reachable: bool | None
+    likely_serving: bool
+
+
+def scope_liveness(scope: ProcessScopeSnapshot) -> ScopeLiveness:
+
+    root_alive = is_process_alive(
+        scope.root_pid,
+        created_after_epoch=(scope.root_created_at_epoch or None),
+    )
+    pgid_reachable = is_pgid_reachable(scope.pgid) if scope.pgid is not None else None
+    return {
+        "root_alive": root_alive,
+        "pgid_reachable": pgid_reachable,
+        "likely_serving": root_alive or pgid_reachable is True,
+    }

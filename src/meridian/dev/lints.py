@@ -323,6 +323,80 @@ def harness_idle_import_violations(sources: Sources) -> list[Violation]:
     return violations
 
 
+def _imported_modules(module: PythonSource) -> list[tuple[int, list[str]]]:
+    """Each import statement's line and the modules it names, at any scope.
+
+    Relative imports are made absolute, and ``from a import b`` names both ``a`` and ``a.b``
+    (``b`` may be a submodule).
+    """
+
+    package = module.path.removesuffix(".py").split("/")[:-1]
+    imports: list[tuple[int, list[str]]] = []
+    for node in ast.walk(module.tree):
+        if isinstance(node, ast.Import):
+            imports.append((node.lineno, [alias.name for alias in node.names]))
+        elif isinstance(node, ast.ImportFrom):
+            base = package[: len(package) - node.level + 1] if node.level else []
+            name = ".".join([*base, *([node.module] if node.module else [])])
+            imports.append((node.lineno, [name, *(f"{name}.{a.name}" for a in node.names)]))
+    return imports
+
+
+def _within(name: str, package: str) -> bool:
+    return name == package or name.startswith(f"{package}.")
+
+
+def _import_violations(
+    sources: Sources, prefix: str, offends: Callable[[str], bool], message: str
+) -> list[Violation]:
+    violations: list[Violation] = []
+    for module in sources.python_modules:
+        if not module.path.startswith(prefix):
+            continue
+        for line, names in _imported_modules(module):
+            offending = next((name for name in names if offends(name)), None)
+            if offending is not None:
+                violations.append(Violation(module.path, line, message.format(offending)))
+    return violations
+
+
+# ``core`` is the bottom layer: everything above may import it, so it imports nothing above.
+_CORE_ALLOWED = ("meridian.lib.core", "meridian.lib.platform", "meridian.lib.utils")
+
+
+def _core_may_not_import(name: str) -> bool:
+    return (
+        _within(name, "meridian")
+        and name not in ("meridian", "meridian.lib")
+        and not any(_within(name, allowed) for allowed in _CORE_ALLOWED)
+    )
+
+
+def core_layer_violations(sources: Sources) -> list[Violation]:
+    """Reject imports in ``lib/core/`` of any Meridian package but core, platform and utils."""
+
+    return _import_violations(
+        sources,
+        "meridian/lib/core/",
+        _core_may_not_import,
+        "lib/core may import only meridian.lib.core, .platform and .utils, not {}: move the "
+        "code to the package whose job it is, or the type it needs down into core.",
+    )
+
+
+def state_spawn_import_violations(sources: Sources) -> list[Violation]:
+    """Reject ``lib/state/`` importing ``lib/spawn/``, which is built on it, or ``lib/bootstrap/``,
+    which builds the spawn service."""
+
+    return _import_violations(
+        sources,
+        "meridian/lib/state/",
+        lambda name: _within(name, "meridian.lib.spawn") or _within(name, "meridian.lib.bootstrap"),
+        "lib/state may not import {}, even lazily: spawn lifecycle (and bootstrap, which builds "
+        "it) builds on state. Move the caller into lib/spawn or take the behavior as an argument.",
+    )
+
+
 def _call_name(function: ast.expr) -> str | None:
     if isinstance(function, ast.Name):
         return function.id
@@ -599,7 +673,7 @@ _CONTEXT_ENV_NAME = re.compile(r"MERIDIAN_(?:CONTEXT|ACTIVE_WORK)_[A-Z0-9_]+")
 CONTEXT_ENV_ALLOWLIST: dict[tuple[str, str], str] = {
     ("meridian/env_registry.py", "*"): "Declares the variables.",
     (
-        "meridian/lib/core/resolved_context.py",
+        "meridian/lib/context/resolved.py",
         "*",
     ): "The resolver: reads launch input, writes child env.",
     ("meridian/lib/launch/constants.py", "*"): "Names the variables a child env keeps or drops.",
@@ -687,7 +761,7 @@ def stale_context_env_allowlist(sources: Sources) -> list[Violation]:
 
 # The caller's spawn ID means something only together with its runtime root, so the
 # process environment is read for it in one place that returns the pair.
-_CALLER_ENV_OWNER = "meridian/lib/core/caller.py"
+_CALLER_ENV_OWNER = "meridian/lib/state/caller.py"
 _CALLER_ENV_NAME = "MERIDIAN_SPAWN_ID"
 
 
@@ -723,13 +797,13 @@ def _is_os_environ(node: ast.expr) -> bool:
 
 
 def caller_env_read_violations(sources: Sources) -> list[Violation]:
-    """Reject reading the caller's spawn ID from ``os.environ`` outside ``lib/core/caller.py``."""
+    """Reject reading the caller's spawn ID from ``os.environ`` outside ``lib/state/caller.py``."""
 
     return [
         Violation(
             module.path,
             line,
-            "the caller's spawn ID is read through meridian.lib.core.caller "
+            "the caller's spawn ID is read through meridian.lib.state.caller "
             "(caller_identity, caller_in, caller_spawn_id): an ID without its runtime root "
             "names a different session in another project.",
         )
@@ -757,6 +831,8 @@ CHECKS: tuple[Check, ...] = (
     stale_raw_write_allowlist,
     unregistered_env_violations,
     harness_idle_import_violations,
+    core_layer_violations,
+    state_spawn_import_violations,
     import_time_bootstrap_violations,
     launch_path_violations,
     sys_executable_violations,

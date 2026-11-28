@@ -5,7 +5,7 @@ from pathlib import Path
 import structlog
 
 from meridian.lib.config.loader import load_config
-from meridian.lib.core.context import RuntimeContext
+from meridian.lib.context.runtime import RuntimeContext
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.diagnostics import capture_library_diagnostics
 from meridian.lib.harness.registry import HarnessRegistry, get_default_harness_registry

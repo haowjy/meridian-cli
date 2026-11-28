@@ -21,7 +21,7 @@ from meridian.lib.artifact.store import (
     save_serves,
     serves_lock_path,
 )
-from meridian.lib.core.resolved_context import ResolvedContext
+from meridian.lib.context.resolved import ResolvedContext
 from meridian.lib.platform.detach import detached_popen_kwargs
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope.base import PROCESS_BIRTH_UNKNOWN_EPOCH

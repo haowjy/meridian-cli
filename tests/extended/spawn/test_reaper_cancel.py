@@ -15,12 +15,12 @@ import psutil
 import pytest
 
 import meridian.lib.ops.spawn.control as spawn_control
-from meridian.lib.core.lifecycle import SpawnLifecycleService
-from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts
-from meridian.lib.core.spawn_service import SpawnApplicationService
 from meridian.lib.core.types import SpawnId
 from meridian.lib.ops.spawn.models import SpawnCancelInput
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
+from meridian.lib.spawn.lifecycle import SpawnLifecycleService
+from meridian.lib.spawn.outcome import ExecutionTerminalFacts
+from meridian.lib.spawn.service import SpawnApplicationService
 from meridian.lib.state import spawn_store, spawn_tree
 from meridian.lib.state.launch_lock import acquire
 from meridian.lib.state.process_scope_projection import record_scope
@@ -121,7 +121,7 @@ async def test_cancel_descendants_rescans_for_newly_appearing_descendant(
             _start_descendant(runtime_root, "p3", parent_id="p2")
         return original_active_descendants(runtime_root_arg, root_id)
 
-    monkeypatch.setattr(spawn_tree, "active_descendants", active_descendants)
+    monkeypatch.setattr("meridian.lib.spawn.service.active_descendants", active_descendants)
 
     reaped_ids = await service.cancel_descendants(SpawnId("p1"))
 
@@ -143,8 +143,8 @@ async def test_cancel_descendants_reports_only_proven_terminal_descendants(
     _start_descendant(runtime_root, "p1")
     _start_descendant(runtime_root, "p2", parent_id="p1")
     _start_descendant(runtime_root, "p3", parent_id="p1")
-    monkeypatch.setattr("meridian.lib.core.spawn_service._CANCEL_GRACE_SECS", 0.01)
-    monkeypatch.setattr("meridian.lib.core.spawn_service._CANCEL_KILL_SECS", 0.01)
+    monkeypatch.setattr("meridian.lib.spawn.service._CANCEL_GRACE_SECS", 0.01)
+    monkeypatch.setattr("meridian.lib.spawn.service._CANCEL_KILL_SECS", 0.01)
 
     # p2's runner stays alive (its launch lock is held) and nothing can signal it.
     for held in ("p2", "p3"):
@@ -263,7 +263,7 @@ def test_spawn_cancel_refuses_process_verified_live_primary_without_readable_lea
         lease_path.write_text(lease_content, encoding="utf-8")
     _patch_spawn_cancel_runtime_resolution(monkeypatch, runtime_root=runtime_root)
     monkeypatch.setattr(
-        "meridian.lib.core.spawn_service.is_process_alive_with_birth",
+        "meridian.lib.spawn.service.is_process_alive_with_birth",
         lambda pid, birth: pid == 8201 and birth == 8201.0,
     )
 
@@ -314,8 +314,8 @@ def test_spawn_cancel_allows_forced_or_dead_managed_primary(
         "meridian.lib.state.session_store.is_process_alive_with_birth",
         lambda pid, birth: pid == 8101 and birth == 8101.0 and lease_owner_alive,
     )
-    monkeypatch.setattr("meridian.lib.core.spawn_service._CANCEL_GRACE_SECS", 0.01)
-    monkeypatch.setattr("meridian.lib.core.spawn_service._CANCEL_KILL_SECS", 0.01)
+    monkeypatch.setattr("meridian.lib.spawn.service._CANCEL_GRACE_SECS", 0.01)
+    monkeypatch.setattr("meridian.lib.spawn.service._CANCEL_KILL_SECS", 0.01)
 
     output = spawn_control.spawn_cancel_sync(
         SpawnCancelInput(
@@ -390,8 +390,8 @@ def test_spawn_cancel_managed_primary_without_runner_converges_to_terminal(
     )
     _patch_spawn_cancel_runtime_resolution(monkeypatch, runtime_root=runtime_root)
     fake_managed_primary_birth_liveness(monkeypatch, set())
-    monkeypatch.setattr("meridian.lib.core.spawn_service._CANCEL_GRACE_SECS", 0.01)
-    monkeypatch.setattr("meridian.lib.core.spawn_service._CANCEL_KILL_SECS", 0.01)
+    monkeypatch.setattr("meridian.lib.spawn.service._CANCEL_GRACE_SECS", 0.01)
+    monkeypatch.setattr("meridian.lib.spawn.service._CANCEL_KILL_SECS", 0.01)
     terminated_pids = recording_managed_primary_terminations(monkeypatch)
 
     output = spawn_control.spawn_cancel_sync(

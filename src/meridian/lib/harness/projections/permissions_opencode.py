@@ -33,19 +33,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import cast
 
-from meridian.lib.harness.opencode_backend import OpenCodeVersion, bound_opencode_version
-from meridian.lib.harness.projections.compaction import compaction_report
-from meridian.lib.harness.projections.effort import opencode_effort_report
-from meridian.lib.harness.projections.native_config import unsupported_native_config_report
-from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.policy import (
+from meridian.lib.core.permission_policy import (
     EnforcementReport,
     ReportLine,
     complete_report,
     platform_element,
     rule_element,
 )
-from meridian.lib.tools import (
+from meridian.lib.core.tools import (
     PLATFORM_ORIGIN,
     STRICTNESS,
     ToolAction,
@@ -53,6 +48,11 @@ from meridian.lib.tools import (
     split_native,
     strictest,
 )
+from meridian.lib.harness.opencode_backend import OpenCodeVersion, bound_opencode_version
+from meridian.lib.harness.projections.compaction import compaction_report
+from meridian.lib.harness.projections.effort import opencode_effort_report
+from meridian.lib.harness.projections.native_config import unsupported_native_config_report
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 _V2_ACTION_ALIASES: dict[str, str] = {
     "bash": "shell",

@@ -13,9 +13,9 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.core.permission_policy import PermissionPolicy, PlatformCommand
+from meridian.lib.core.tools import ToolAction, ToolRule, split_native, strictest
 from meridian.lib.harness.permission_broker import HEADLESS_REJECT_REASON
-from meridian.lib.safety.policy import PermissionPolicy, PlatformCommand
-from meridian.lib.tools import ToolAction, ToolRule, split_native, strictest
 
 # Carries one launch's ExtensionPolicy as JSON to its enforcer. Compiled afresh per launch,
 # so a nested launch never inherits it (see ``child=False`` in env_registry).

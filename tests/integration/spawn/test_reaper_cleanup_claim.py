@@ -6,10 +6,10 @@ from typing import TYPE_CHECKING
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.process_scope.base import CleanupResult, ProcessScopeSnapshot
+from meridian.lib.spawn.reaper import reconcile_active_spawn
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.process_scope_projection import record_scope
-from meridian.lib.state.reaper import reconcile_active_spawn
 from tests.support.launch_paths import launch_paths
 
 if TYPE_CHECKING:
@@ -91,11 +91,11 @@ def test_runner_finalize_between_reaper_snapshot_and_cleanup_preserves_scope(
         claim_active_spawn_scopes(_runtime_root, SpawnId(record.id))
 
     monkeypatch.setattr(
-        "meridian.lib.state.reaper._claim_reaper_cleanup",
+        "meridian.lib.spawn.reaper._claim_reaper_cleanup",
         runner_wins_then_claim,
     )
     monkeypatch.setattr(
-        "meridian.lib.core.process_cleanup.terminate_scope_sync",
+        "meridian.lib.spawn.reaper.terminate_scope_sync",
         lambda *_args, **_kwargs: kill_calls.append("worker"),
     )
 
@@ -118,7 +118,7 @@ def test_double_reconcile_does_not_double_kill_claimed_scope(
         terminated.append(claimed.release_id)
         return _cleanup_result(claimed)
 
-    monkeypatch.setattr("meridian.lib.core.process_cleanup.terminate_scope_sync", terminate)
+    monkeypatch.setattr("meridian.lib.spawn.reaper.terminate_scope_sync", terminate)
     stale = _record(runtime_root, spawn_id)
 
     with ThreadPoolExecutor(max_workers=2) as executor:
