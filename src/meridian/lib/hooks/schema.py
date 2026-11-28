@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from pathlib import Path
 from typing import Annotated, ClassVar, get_args
 
 from pydantic import (
@@ -59,7 +60,7 @@ _REMOVED_ROW_KEYS: dict[str, str] = {
 # says what to do.
 _SKIPPED_BUILTINS: dict[str, str] = {
     "git-autosync": (
-        "git contexts sync by themselves (see `[context.<name>] autosync`); delete this row"
+        "the sync daemon syncs git contexts now (see `meridian sync status`); delete this row"
     ),
 }
 
@@ -199,7 +200,7 @@ def hook_row_values(raw_value: object, *, source: str) -> tuple[object, ...]:
     return tuple(values)
 
 
-def normalize_hook_row(raw_value: object, *, source: str) -> HookSpec | None:
+def normalize_hook_row(raw_value: object, *, source: str, file: Path) -> HookSpec | None:
     """Validate one row; ``None`` for a row that is skipped with a warning."""
 
     row = json_object(raw_value)
@@ -207,11 +208,11 @@ def normalize_hook_row(raw_value: object, *, source: str) -> HookSpec | None:
         builtin = _normalized_string(row.get("builtin"))
         if isinstance(builtin, str) and builtin in _SKIPPED_BUILTINS:
             warn_config(
-                f"Skipping '{source}': builtin `{builtin}` was removed; "
+                f"Skipping '{source}' in '{file}': builtin `{builtin}` was removed; "
                 f"{_SKIPPED_BUILTINS[builtin]}."
             )
             return None
-    warn_unknown_model_keys(raw_value, model=HookSpec, source=source)
+    warn_unknown_model_keys(raw_value, model=HookSpec, source=source, file=file)
     try:
         return HookSpec.model_validate(raw_value)
     except ValidationError as error:

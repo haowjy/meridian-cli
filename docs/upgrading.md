@@ -108,20 +108,25 @@ working, unused, until the next minor (see
 [Git contexts sync through a daemon](#git-contexts-sync-through-a-daemon-not-the-git-autosync-hook)).
 This release removes it:
 
-- **A `[[hooks]] builtin = "git-autosync"` row is skipped.** Delete it; git contexts sync on
-  their own. The other rows load and run, and `meridian hooks list`, `hooks check` and
-  `hooks run` still exit 0. Each command prints once on stderr:
+- **A `[[hooks]] builtin = "git-autosync"` row is skipped.** Delete it; the sync daemon
+  syncs git contexts now (`meridian sync status` shows them). The other rows load and run,
+  and `meridian hooks list`, `hooks check`, `hooks run <other hook>` and `meridian doctor`
+  exit 0. Each command prints once on stderr:
 
   ```
-  Skipping 'project.hooks[1]': builtin `git-autosync` was removed; git contexts sync by themselves (see `[context.<name>] autosync`); delete this row.
+  Skipping 'project.hooks[1]' in '/path/to/meridian.toml': builtin `git-autosync` was removed; the sync daemon syncs git contexts now (see `meridian sync status`); delete this row.
   ```
 
-  Runtime dispatch logs the same line and runs the other rows.
+  Running the row itself (`meridian hooks run git-autosync`, or the name 0.28 generated
+  for it) exits 1 with `Hook 'git-autosync' not found`, since the row no longer loads.
+  Hooks fired during a spawn or session log the same line and run the other rows. The
+  `inbox.received` hook process has no stderr, so a skipped row in its user config leaves
+  no trace there.
 - **`remote` and `exclude` on a `[[hooks]]` row are ignored.** The row still loads and runs;
   delete the key. Each prints:
 
   ```
-  Ignoring 'project.hooks[1].remote': it belonged to the removed `git-autosync` hook; delete it.
+  Ignoring 'project.hooks[1].remote' in '/path/to/meridian.toml': it belonged to the removed `git-autosync` hook; delete it.
   ```
 
   A `git-autosync` row carrying them gets only the skip warning.

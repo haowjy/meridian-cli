@@ -9,6 +9,7 @@ from typing_extensions import TypeIs
 
 from meridian.lib.config.model_base import ConfigModel
 from meridian.lib.core.logging import warn_once
+from meridian.lib.diagnostics import library_warnings_captured
 from meridian.lib.utils.json_shapes import is_json_object, is_object_sequence
 
 logger = logging.getLogger(__name__)
@@ -88,9 +89,13 @@ def warn_config(message: str) -> None:
     """Warn about a config problem Meridian skips or ignores.
 
     Config is loaded several times per command, and on every event in a long-running
-    process; the warning prints once per command (or process).
+    process; the warning prints once per command (or process). One logged while library
+    diagnostics are captured never reaches stderr, so it doesn't count as printed.
     """
 
+    if library_warnings_captured():
+        logger.warning("%s", message)
+        return
     warn_once(("config", message), lambda: logger.warning("%s", message))
 
 
@@ -99,7 +104,7 @@ def warn_unknown_model_keys(
     *,
     model: type[BaseModel],
     source: str,
-    file: Path | None = None,
+    file: Path,
 ) -> None:
     """Warn for keys Pydantic would ignore, using Pydantic's own traversal.
 
@@ -112,16 +117,16 @@ def warn_unknown_model_keys(
         validated = model.model_validate(raw_value, extra="allow")
     except ValidationError:
         return
-    _warn_extras(validated, source, f" in '{file}'" if file is not None else "")
+    _warn_extras(validated, source, file)
 
 
 def _is_object_root_model(value: object) -> TypeIs[RootModel[object]]:
     return isinstance(value, RootModel)
 
 
-def _warn_extras(value: object, path: str, in_file: str) -> None:
+def _warn_extras(value: object, path: str, file: Path) -> None:
     if _is_object_root_model(value):
-        _warn_extras(value.root, path, in_file)
+        _warn_extras(value.root, path, file)
     elif isinstance(value, BaseModel):
         model = type(value)
         is_config = issubclass(model, ConfigModel)
@@ -131,14 +136,14 @@ def _warn_extras(value: object, path: str, in_file: str) -> None:
         )
         for key in value.model_extra or {}:
             if key in ignored:
-                warn_config(f"Ignoring '{path}.{key}'{in_file}: {ignored[key]}.")
+                warn_config(f"Ignoring '{path}.{key}' in '{file}': {ignored[key]}.")
             elif not silenced:
-                warn_config(f"Ignoring unknown Meridian config key '{path}.{key}'.")
+                warn_config(f"Ignoring unknown Meridian config key '{path}.{key}' in '{file}'.")
         for name in model.model_fields:
-            _warn_extras(getattr(value, name), f"{path}.{name}", in_file)
+            _warn_extras(getattr(value, name), f"{path}.{name}", file)
     elif is_object_sequence(value):
         for index, item in enumerate(value, start=1):
-            _warn_extras(item, f"{path}[{index}]", in_file)
+            _warn_extras(item, f"{path}[{index}]", file)
     elif is_json_object(value):
         for key, item in value.items():
-            _warn_extras(item, f"{path}.{key}", in_file)
+            _warn_extras(item, f"{path}.{key}", file)

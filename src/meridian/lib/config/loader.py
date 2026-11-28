@@ -99,6 +99,7 @@ def _map_catalog_table(
     *,
     table_path: tuple[str, ...],
     target: dict[str, object],
+    path: Path,
 ) -> None:
 
     for key, value in raw_value.items():
@@ -112,10 +113,12 @@ def _map_catalog_table(
                 cast("dict[str, object]", value),
                 table_path=(*table_path, key),
                 target=target,
+                path=path,
             )
             continue
 
-        warn_config(f"Ignoring unknown Meridian config key '{'.'.join((*table_path, key))}'.")
+        key_path = ".".join((*table_path, key))
+        warn_config(f"Ignoring unknown Meridian config key '{key_path}' in '{path}'.")
 
 
 def _nested_model_type(annotation: object) -> type[ConfigModel] | None:
@@ -178,9 +181,7 @@ def _normalize_toml_payload_values(
                 )
             continue
         if key in DYNAMIC_SECTION_DESCRIPTORS:
-            section = normalize_dynamic_sections(
-                payload={key: raw_value},
-            )
+            section = normalize_dynamic_sections(payload={key: raw_value}, path=path)
             normalized = merge_dynamic_sections(normalized, section)
             dynamic = merge_dynamic_sections(dynamic, section)
             continue
@@ -194,12 +195,12 @@ def _normalize_toml_payload_values(
         if key in _FLATTENED_MODEL_SECTIONS:
             if not is_json_object(raw_value):
                 raise ValueError(f"Invalid value for '{key}' in '{path}': expected table.")
-            _map_catalog_table(raw_value, table_path=(key,), target=normalized)
+            _map_catalog_table(raw_value, table_path=(key,), target=normalized, path=path)
             continue
 
         option = OPTION_CATALOG.find_file_alias(table_path=(), key=key)
         if option is None:
-            warn_config(f"Ignoring unknown Meridian config key '{key}'.")
+            warn_config(f"Ignoring unknown Meridian config key '{key}' in '{path}'.")
             continue
 
         coerced = parse_toml_scalar(
