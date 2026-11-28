@@ -96,6 +96,10 @@ export class IdleRuntime {
   private readonly deadlines = new Map<IdleStage, number>();
   private transitionQueue: Promise<void> = Promise.resolve();
   private lastUserText: string | null = null;
+  /** The last agent_end's messages: the run's excerpts, read when it settles. */
+  private lastMessages: unknown = undefined;
+  /** What Meridian last heard; a retry or continuation's agent_start repeats `turn_active`. */
+  private reported: "idle" | "turn_active" | null = null;
 
   constructor(private readonly run: MeridianRunner = runMeridianCommand) {}
 
@@ -105,6 +109,10 @@ export class IdleRuntime {
     this.clearSchedule();
     this.active = null;
     this.lastUserText = null;
+    this.lastMessages = undefined;
+    this.reported = null;
+    // Reported whatever the idle config says: `spawn list` shows it.
+    void this.enqueueTransition(() => this.reportActivity("idle"));
 
     const config = await this.runJson(["idle", "config"]);
     if (revision !== this.revision || !isRecord(config) || config.enabled !== true) {
@@ -119,14 +127,23 @@ export class IdleRuntime {
     this.restore(rows, ctx.sessionManager.getSessionId());
   }
 
-  async agentEnd(ctx: ExtensionContext, messages?: unknown): Promise<void> {
-    if (!this.enabled || !safeIsIdle(ctx)) {
-      return;
-    }
+  agentStart(): void {
+    void this.enqueueTransition(() => this.reportActivity("turn_active"));
+  }
 
+  agentEnd(messages: unknown): void {
+    this.lastMessages = messages;
+  }
+
+  /** The run is over: no retry, compaction or queued continuation follows. An arm records
+   * the turn's end itself; with idle off the end is reported alone. */
+  async agentSettled(ctx: ExtensionContext): Promise<void> {
+    const messages = this.lastMessages;
+    this.lastMessages = undefined;
     const revision = this.revision;
     await this.enqueueTransition(async () => {
       if (revision !== this.revision || !this.enabled) {
+        await this.reportActivity("idle");
         return;
       }
 
@@ -156,6 +173,7 @@ export class IdleRuntime {
       }
 
       const reply = await this.runJson(args);
+      this.reported = "idle";
       if (revision !== this.revision) {
         return;
       }
@@ -302,6 +320,16 @@ export class IdleRuntime {
     ]);
   }
 
+  private async reportActivity(activity: "idle" | "turn_active"): Promise<void> {
+    if (this.reported === activity) return;
+    try {
+      const result = await this.run(["idle", "activity", activity, "--harness", "pi"]);
+      if (result.exitCode === 0) this.reported = activity;
+    } catch {
+      // The next edge reports again.
+    }
+  }
+
   private enqueueTransition(task: () => Promise<void>): Promise<void> {
     const next = this.transitionQueue.then(task).catch(() => undefined);
     this.transitionQueue = next;
@@ -341,27 +369,16 @@ function integer(value: unknown): number | null {
   return typeof value === "number" && Number.isSafeInteger(value) ? value : null;
 }
 
-function safeIsIdle(ctx: ExtensionContext): boolean {
-  try {
-    return ctx.isIdle();
-  } catch {
-    return false;
-  }
-}
-
 export function registerMeridianIdleExtension(
   pi: ExtensionAPI,
   run: MeridianRunner = runMeridianCommand,
 ): IdleRuntime {
   const runtime = new IdleRuntime(run);
   pi.on("session_start", async (_event, ctx) => runtime.start(ctx));
-  pi.on("agent_end", (event, ctx) => {
-    // Pi still reports streaming while it awaits agent_end handlers. Check on
-    // the next event-loop turn, when ctx.isIdle() reflects the completed turn.
-    const timer = setTimeout(() => {
-      void runtime.agentEnd(ctx, event.messages);
-    }, 0);
-    timer.unref();
+  pi.on("agent_start", () => runtime.agentStart());
+  pi.on("agent_end", (event) => runtime.agentEnd(event.messages));
+  pi.on("agent_settled", (_event, ctx) => {
+    void runtime.agentSettled(ctx);
   });
   pi.on("input", (event, ctx) => runtime.input(event.source, ctx));
   pi.on("session_shutdown", () => runtime.stop());

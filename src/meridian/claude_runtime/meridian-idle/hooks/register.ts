@@ -19,6 +19,7 @@ import {
 //   permission  Claude still awaits approval -> `idle needs-permission`, with no state change
 //   keepwarm  the cache warning fired and the user opted in -> up to `keepwarm_pings` prompts that keep the cache warm (see keepwarm.ts)
 //   reminder  the cache warning fired and core said `remind` -> one prompt asking the model to record its state; it takes ping 1's place
+//   activity  a main-loop turn started or ended, or the session started -> `idle activity`, or the turn end's `idle arm`; also with idle off
 // Notifications belong to core; this file never sends one, reads
 // meridian config or env, or writes under `~/.meridian`. Nothing here writes to the terminal: diagnostics go to the
 // plugin's own `$.store` key `log`, and `/meridian-idle` prints them on request. `/keepwarm` toggles or sets keepwarm.
@@ -88,6 +89,8 @@ type Policy = {
 
 type State = {
   /** Print mode or no surface: the whole session is ignored. */
+  headless: boolean
+  /** Headless, or idle is off for this session: only turn activity is reported. */
   inert: boolean
   /** Memoised `idle config --interactive` verdict. */
   gate: Promise<boolean> | undefined
@@ -123,6 +126,7 @@ type State = {
 
 function newState(): State {
   return {
+    headless: false,
     inert: false,
     gate: undefined,
     policy: { keepwarm: false, warnMs: undefined, pings: DEFAULT_PINGS },
@@ -194,9 +198,9 @@ function enqueue(s: State, task: () => Promise<unknown>): Promise<unknown> {
 }
 
 /** Runs `meridian idle <args>` in the session's environment and returns the parsed stdout (a JSON object or array). Never throws. */
-async function cli($: EngineInterface, s: State, args: string[]): Promise<unknown> {
+async function cli($: EngineInterface, s: State, args: string[], { interactive = true } = {}): Promise<unknown> {
   try {
-    const out = await $.process.run(['meridian', 'idle', ...args, '--interactive'], { timeoutMs: CLI_TIMEOUT_MS })
+    const out = await $.process.run(['meridian', 'idle', ...args, ...(interactive ? ['--interactive'] : [])], { timeoutMs: CLI_TIMEOUT_MS })
     const text = out.stdout.trim()
     if (text === '') return { error: `no output (exit ${out.exitCode}): ${out.stderr.trim().slice(0, 200)}` }
     try {
@@ -217,6 +221,14 @@ function failure(reply: unknown): string | undefined {
 
 function who(armed: Armed): string[] {
   return ['--harness', HARNESS, '--session', armed.session, '--stretch', String(armed.stretch)]
+}
+
+// -- activity: is a main-loop turn running? ------------------------------
+
+/** Tells Meridian a turn edge, whatever the idle config says: `spawn list` shows it. */
+async function reportActivity($: EngineInterface, s: State, activity: 'idle' | 'turn_active'): Promise<void> {
+  const problem = failure(await cli($, s, ['activity', activity, '--harness', HARNESS], { interactive: false }))
+  if (problem !== undefined) note($, s, `activity ${activity} failed: ${problem}`)
 }
 
 // -- gate: is this a primary TUI session with idle enabled? ----------------
@@ -338,7 +350,8 @@ async function armTask(
   assistantText: string | undefined,
   tasks: BackgroundTask[] | undefined,
 ): Promise<void> {
-  if (!(await gate($, s))) return
+  // The arm records the turn's end itself; without one the end is reported alone.
+  if (!(await gate($, s))) return reportActivity($, s, 'idle')
   try {
     // Work still running does not stop the arm: core reads it and holds or delays the push.
     const session = await $.session.id()
@@ -732,10 +745,12 @@ export const register: Register = on => {
 
   on('session.start', async ($, e, next) => {
     if (e.isInteractive === false || e.surface === null) {
+      s.headless = true
       s.inert = true
     } else {
       // Off the startup path: `meridian` takes about a second.
       const epoch = s.epoch
+      void enqueue(s, () => reportActivity($, s, 'idle'))
       void enqueue(s, () => startTask($, s, epoch))
     }
     return next(e)
@@ -747,6 +762,7 @@ export const register: Register = on => {
     if (e.agentId === undefined) {
       s.stopTasks = undefined
       s.running = true
+      if (!s.headless) void enqueue(s, () => reportActivity($, s, 'turn_active'))
       // The prompt may queue behind a running turn, so its turn is found by the nonce in its text, not by order.
       const prompt = s.prompt
       if (prompt?.phase === 'submitted' && e.text.includes(prompt.nonce)) {
@@ -768,6 +784,8 @@ export const register: Register = on => {
     if (e.agentId === undefined) {
       s.running = false
       touched($, s)
+      // Idle off arms nothing, so the turn's end is reported alone (any reason: an Esc or an error ends it too).
+      if (s.inert && !s.headless) void enqueue(s, () => reportActivity($, s, 'idle'))
     }
     if (e.agentId === undefined && !s.inert) {
       const epoch = s.epoch

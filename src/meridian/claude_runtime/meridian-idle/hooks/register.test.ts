@@ -104,7 +104,8 @@ function flag(args: string[], name: string): string | undefined {
 }
 
 function expectCliContract(h: Host): void {
-  expect(h.calls.every(args => args.at(-1) === '--interactive')).toBe(true)
+  // `activity` is reported whatever the idle gate says, so it asserts no TUI ownership.
+  expect(h.calls.every(args => args[0] === 'activity' || args.at(-1) === '--interactive')).toBe(true)
   for (const args of h.calls.filter(args => ['config', 'arm', 'return', 'fire'].includes(args[0] ?? ''))) {
     expect(flag(args, '--harness')).toBe('claude')
     if (args[0] !== 'config') expect(flag(args, '--session')).toBe('sess-1')
@@ -116,6 +117,7 @@ test('print mode keeps the mod inert', async ($, on) => {
   const clock = install(on, h)
 
   await $.session.start({ cwd: '/work/project', surface: null, isInteractive: false })
+  await $.turn.start({ text: 'go', turnId: 't1' })
   await $.turn.complete(MAIN_TURN)
   await $.prompt.submit({ text: 'hi', wait: false, origin: COMPOSER })
   await $.command.run({ command: 'compact', args: '', origin: COMPOSER, presentation: { isFullscreen: true, columns: 80 } })
@@ -123,6 +125,32 @@ test('print mode keeps the mod inert', async ($, on) => {
 
   expect(h.calls).toEqual([])
 })
+
+/** The turn edges Meridian heard, in order: `activity <state>`, and each arm as the turn end it carries. */
+function edges(h: Host): string[] {
+  return h.calls.flatMap(args => (args[0] === 'activity' ? [args[1] ?? ''] : args[0] === 'arm' ? ['idle (arm)'] : []))
+}
+
+for (const enabled of [true, false]) {
+  test(`main-loop turn edges reach Meridian in order with idle ${enabled ? 'on' : 'off'}`, async ($, on) => {
+    const h = host()
+    h.reply.config = { enabled, reason: enabled ? undefined : 'idle-disabled', warn_minutes: 10 }
+    h.reply.activity = { recorded: true }
+    const clock = install(on, h)
+
+    await $.session.start(TUI)
+    await $.turn.start({ text: 'go', turnId: 't1' })
+    // A subagent's turn is not the session's.
+    await $.turn.start({ text: 'review', turnId: 'a1', agentId: 'agent-1' })
+    await $.turn.complete({ ...MAIN_TURN, turnId: 'a1', agentId: 'agent-1' })
+    await $.turn.complete({ ...MAIN_TURN, reason: 'aborted', isAborted: true })
+    await clock.advance(0)
+
+    // With idle off nothing arms, so the turn end is reported on its own.
+    expect(edges(h)).toEqual(['idle', 'turn_active', enabled ? 'idle (arm)' : 'idle'])
+    expect(calls(h, 'activity').every(args => flag(args, '--harness') === 'claude')).toBe(true)
+  })
+}
 
 test('a completed turn arms every returned deadline and fires each at its time', async ($, on) => {
   const h = host()
