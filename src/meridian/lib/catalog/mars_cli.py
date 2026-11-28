@@ -9,8 +9,10 @@ prints says which root it used (``MarsRoot``).
 
 from __future__ import annotations
 
+import json
 import shlex
 import shutil
+import subprocess
 import sys
 import tomllib
 from dataclasses import dataclass
@@ -77,16 +79,7 @@ def is_project_not_found(payload: object) -> bool:
     error = cast("dict[str, object]", payload).get("error")
     if not isinstance(error, dict):
         return False
-    row = cast("dict[str, object]", error)
-    if row.get("code") == "project_not_found":
-        return True
-    # Mars before its distinct code reports the same error as `invalid_config`.
-    message = row.get("message")
-    return (
-        row.get("code") == "invalid_config"
-        and isinstance(message, str)
-        and "no mars.toml found from " in message
-    )
+    return cast("dict[str, object]", error).get("code") == "project_not_found"
 
 
 class MarsRoot(BaseModel):
@@ -181,7 +174,11 @@ class LegacyUserRoot:
             if self.active
             else f"{path} holds no items and Meridian no longer reads it. Before deleting it:"
         )
-        return "\n".join((lead, *(f"  {step}" for step in self.steps), f"then delete {path}"))
+        delete = (
+            f"then delete {path}, once you no longer need to roll back to Meridian 0.28, "
+            "which reads only that folder"
+        )
+        return "\n".join((lead, *(f"  {step}" for step in self.steps), delete))
 
 
 # What a dependency entry can say that ``mars add`` reproduces, and the flag that says it.
@@ -193,16 +190,38 @@ _ADD_KEYS = {"url", "path", "version", *_ADD_LIST_FLAGS, *_ADD_VALUE_FLAGS, *_AD
 _CONFIG_SECTIONS = ("settings", "models", "agents", "skills")
 
 
-def legacy_user_root(user_level: MarsRoot | None = None) -> LegacyUserRoot | None:
+@cache
+def legacy_user_root() -> LegacyUserRoot | None:
     """``~/.meridian/mars`` when it exists. Meridian never deletes or writes it.
 
-    ``user_level``: the Mars user level, whose real paths the move steps then name; without
-    it they say which field of ``meridian mars --user list --json`` holds each path.
+    Its move steps name the Mars user level's real paths, or, when Mars can't say where that
+    is, which field of ``meridian mars --user list --json`` holds each path.
     """
 
     root = get_user_home() / "mars"
     own_items = root / ".mars-src"
     has_own_items = own_items.is_dir()
+    try:
+        manifest: dict[str, object] | None = tomllib.loads(
+            (root / "mars.toml").read_text(encoding="utf-8")
+        )
+    except FileNotFoundError:
+        if not has_own_items and not root.is_dir():
+            return None
+        manifest = None
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        return LegacyUserRoot(path=root, active=True, unreadable=str(exc))
+    manifest = manifest or {}
+    tables = [
+        (table, cast("dict[str, object]", entries))
+        for table in ("dependencies", "local-dependencies")
+        if isinstance(entries := manifest.get(table), dict) and entries
+    ]
+    sections = [f"[{name}]" for name in _CONFIG_SECTIONS if name in manifest]
+    if not (tables or has_own_items or sections):
+        return LegacyUserRoot(path=root, active=False)
+
+    user_level = mars_user_level()
     if user_level is not None:
         user_items = f"{(user_level.path / '.mars-src').as_posix()}/"
         user_manifest = (user_level.path / "mars.toml").as_posix()
@@ -217,33 +236,42 @@ def legacy_user_root(user_level: MarsRoot | None = None) -> LegacyUserRoot | Non
         user_config = (
             "your Mars user config.toml (in root.path of meridian mars --user list --json)"
         )
-    own_items_step = f"move {own_items.as_posix()} into {user_items}"
-    try:
-        manifest = tomllib.loads((root / "mars.toml").read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        if not has_own_items:
-            return LegacyUserRoot(path=root, active=False) if root.is_dir() else None
-        return LegacyUserRoot(path=root, active=True, steps=(own_items_step,))
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
-        return LegacyUserRoot(path=root, active=True, unreadable=str(exc))
-    dependency_steps = [
+    steps = [
         _dependency_step(name, spec, table=table, base=root, user_manifest=user_manifest)
-        for table in ("dependencies", "local-dependencies")
-        if isinstance(entries := manifest.get(table), dict)
-        for name, spec in cast("dict[str, object]", entries).items()
+        for table, entries in tables
+        for name, spec in entries.items()
     ]
-    sections = [f"[{name}]" for name in _CONFIG_SECTIONS if name in manifest]
-    steps = [*dependency_steps]
     if has_own_items:
-        steps.append(own_items_step)
+        steps.append(f"move {own_items.as_posix()} into {user_items}")
     if sections:
         steps.append(
             f"move {', '.join(sections)} from {(root / 'mars.toml').as_posix()} into "
             f"{user_config}, which every root reads"
         )
-    return LegacyUserRoot(
-        path=root, active=has_own_items or bool(dependency_steps), steps=tuple(steps)
-    )
+    if has_own_items:
+        # `add` installs what it adds; moved `.mars-src/` items install on the next sync.
+        steps.append("meridian mars --user sync")
+    return LegacyUserRoot(path=root, active=has_own_items or bool(tables), steps=tuple(steps))
+
+
+def mars_user_level() -> MarsRoot | None:
+    """The Mars user level's root, as ``mars --user list --json`` reports it; None if Mars can't."""
+
+    executable = resolve_mars_executable()
+    if executable is None:
+        return None
+    try:
+        result = subprocess.run(
+            [executable, "--user", "--json", "list"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        payload: object = json.loads(result.stdout)
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+    return parse_mars_root(payload)
 
 
 def _dependency_step(name: str, spec: object, *, table: str, base: Path, user_manifest: str) -> str:
@@ -292,7 +320,6 @@ def mark_legacy_user_root_reported() -> None:
     _legacy_user_root_told = True
 
 
-@cache
 def _active_legacy_user_root() -> LegacyUserRoot | None:
     """The legacy root lookups still read, warning once per run how to move it."""
 
@@ -337,6 +364,7 @@ __all__ = [
     "mark_legacy_user_root_reported",
     "mars_content_args",
     "mars_location",
+    "mars_user_level",
     "parse_mars_root",
     "provided_dir",
     "provided_sync_args",

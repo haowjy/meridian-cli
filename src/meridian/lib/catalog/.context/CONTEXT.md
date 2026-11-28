@@ -13,7 +13,8 @@ home names none and gets no `--root` (Mars would otherwise open a leftover `~/ma
 refuses `--root ~` from its next minor). Meridian does no walk-up of its own. A write with no project fails in Mars with `project_not_found` (`is_project_not_found`;
 the passthrough's `add`/`link` gate keys on it). Where Meridian must know the root
 (`config show`, `context`, `doctor`, the bootstrap store), it reads the `root` of Mars's
-`--json` output (`MarsRoot`, `parse_mars_root`), from `mars agents list`. A launch lists
+`--json` output (`MarsRoot`, `parse_mars_root`), from `mars agents list`; a listing without
+`root` is malformed output, an error like any other. A launch lists
 agents once (`try_mars_agent_inventory`, passed to `compile_prepared_policy_surface` and
 `prepare_launch_surface`), for the bootstrap store, for whether the harness has native agent
 copies, and for the store a replayed relative profile path resolves in. When Mars can't answer,
@@ -33,7 +34,11 @@ reads its `mars.toml` only to decide whether it still holds items, and if so pas
 `--fallback-root` and warns once per process with the steps to move it
 (`LegacyUserRoot.migration_message`): each dependency as the `meridian mars --user add` that
 recreates it with its version and filters, or, for a key `add` can't set, the entry to copy;
-`[settings]`/`[models]`/`[agents]`/`[skills]` to Mars's user `config.toml`. A `mars.toml` it
+`.mars-src/` to the user level's, then `meridian mars --user sync` to install it;
+`[settings]`/`[models]`/`[agents]`/`[skills]` to Mars's user `config.toml`. Doctor's
+`legacy_user_mars_root` and the lookup warning are the same text from `legacy_user_root`, which
+asks Mars for the user level (`mars_user_level`) so the steps name real paths. The delete step
+says to keep the folder while a rollback to Meridian 0.28 may still need it. A `mars.toml` it
 can't read stays active so Mars reports it, and the warning says it can't be read. Removal is
 in `TODO`.
 

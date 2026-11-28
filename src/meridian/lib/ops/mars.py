@@ -205,8 +205,7 @@ class MarsAgentInventory(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    # None from a Mars that predates reporting it.
-    root: MarsRoot | None
+    root: MarsRoot
     agents: tuple[MarsAgentEntry, ...]
 
     def installs_natively(self, harness: str) -> bool:
@@ -290,8 +289,11 @@ def mars_agent_inventory(project_root: Path | None) -> MarsAgentInventory:
                 fanout=row.get("fanout") is True,
             )
         )
+    root = parse_mars_root(cast("object", payload))
+    if root is None:
+        raise ValueError("mars agents list reported no `root`")
     return MarsAgentInventory(
-        root=parse_mars_root(cast("object", payload)),
+        root=root,
         agents=tuple(sorted(entries, key=lambda entry: entry.name)),
     )
 
@@ -338,28 +340,7 @@ def mars_root_report(project_root: Path | None) -> MarsRootReport:
         inventory = mars_agent_inventory(project_root)
     except ValueError as exc:
         return MarsRootReport(root=None, fallback=fallback, error=str(exc))
-    error = None if inventory.root is not None else "mars agents list reported no root"
-    return MarsRootReport(root=inventory.root, fallback=fallback, error=error)
-
-
-def mars_user_level() -> MarsRoot | None:
-    """The Mars user level's root, as ``mars --user list --json`` reports it; None if Mars can't."""
-
-    executable = resolve_mars_executable()
-    if executable is None:
-        return None
-    try:
-        result = subprocess.run(
-            [executable, "--user", "--json", "list"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        payload: object = json.loads(result.stdout)
-    except (OSError, subprocess.TimeoutExpired, ValueError):
-        return None
-    return parse_mars_root(payload)
+    return MarsRootReport(root=inventory.root, fallback=fallback)
 
 
 def _string_tuple(value: object) -> tuple[str, ...]:

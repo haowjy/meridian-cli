@@ -23,7 +23,6 @@ from meridian.lib.ops.mars import (
     check_upgrade_availability,
     format_upgrade_availability,
     mars_root_report,
-    mars_user_level,
 )
 from meridian.lib.ops.pruning import (
     AdHocProjectDir,
@@ -758,7 +757,14 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
                 payload=finding.payload,
             )
         )
-    warnings.extend(_legacy_user_root_warnings(mars.root))
+    if (legacy := legacy_user_root()) is not None:
+        warnings.append(
+            DoctorWarning(
+                code="legacy_user_mars_root",
+                message=legacy.migration_message(),
+                payload={"path": legacy.path.as_posix(), "steps": list(legacy.steps)},
+            )
+        )
     if mars.error is not None:
         warnings.append(DoctorWarning(code="mars_unavailable", message=mars.error))
     if mars.root is not None and mars.root.kind == "project":
@@ -830,23 +836,6 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
         killed_orphan_spawns=local_report.killed_orphan_spawns,
         autosync=autosync_status,
     )
-
-
-def _legacy_user_root_warnings(root: MarsRoot | None) -> list[DoctorWarning]:
-    legacy = legacy_user_root()
-    if legacy is None:
-        return []
-    if legacy.steps:
-        # Name the user level's real paths in the steps.
-        user_level = root if root is not None and root.kind == "user" else mars_user_level()
-        legacy = legacy_user_root(user_level) or legacy
-    return [
-        DoctorWarning(
-            code="legacy_user_mars_root",
-            message=legacy.migration_message(),
-            payload={"path": legacy.path.as_posix(), "steps": list(legacy.steps)},
-        )
-    ]
 
 
 async def doctor(payload: DoctorInput) -> DoctorOutput:

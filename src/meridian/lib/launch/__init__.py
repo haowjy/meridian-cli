@@ -159,7 +159,7 @@ def launch_primary(
     from meridian.lib.ops.mars import try_mars_agent_inventory
 
     mars_agents = try_mars_agent_inventory(resolved_project_root)
-    if request.include_bootstrap_documents and mars_agents is not None and mars_agents.root:
+    if request.include_bootstrap_documents and mars_agents is not None:
         from meridian.lib.catalog.bootstrap import BootstrapRegistry
 
         request = request.model_copy(

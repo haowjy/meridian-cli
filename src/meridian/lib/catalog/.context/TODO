@@ -1,11 +1,9 @@
 - Review `resolve_model` and `load_mars_descriptions` across CLI, MCP and plugin
   surfaces before removing unused APIs. `catalog_session.py` calls `resolve_model`.
 - Next minor release after the Mars user level: stop reading `~/.meridian/mars`. Delete
-  `LegacyUserRoot`, `legacy_user_root`, `mark_legacy_user_root_reported` and
-  `_active_legacy_user_root` (`mars_cli.py`), `mars_user_level` (`ops/mars.py`), the
-  `--fallback-root` in `mars_content_args`, `_legacy_user_root_warnings` in `ops/diag.py`,
+  `LegacyUserRoot`, `legacy_user_root`, `mark_legacy_user_root_reported`,
+  `_active_legacy_user_root` and `mars_user_level` (`mars_cli.py`), the `--fallback-root`
+  in `mars_content_args`, the `legacy_user_mars_root` warning in `ops/diag.py`,
   and the deprecated JSON fields `mars_fallback` (`config show`, `context`), `mars_user_root`
   (`context`) and `mars_roots` (`doctor`); `mars` replaces them. Mars drops `--fallback-root`
   in the same release. `has_project_marker` (`config/project_root.py`) stops excluding it.
-- Once the Mars that reports `project_not_found` is the minimum (`MARS_MIN_VERSION`), drop
-  the `invalid_config` + "no mars.toml found from" match in `is_project_not_found`.

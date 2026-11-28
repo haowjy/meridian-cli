@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from meridian.lib.catalog.mars_cli import MarsRoot
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.projections.project_claude import project_claude_settings_json
 from meridian.lib.harness.registry import get_default_harness_registry
@@ -198,7 +199,7 @@ def test_agent_copy_exception_keeps_generic_agent_only(
         mars_ops,
         "mars_agent_inventory",
         lambda _root: mars_ops.MarsAgentInventory(
-            root=None,
+            root=MarsRoot(kind="project", path=tmp_path),
             agents=(mars_ops.MarsAgentEntry(name="scratch", native_harnesses=("claude",)),),
         ),
     )
