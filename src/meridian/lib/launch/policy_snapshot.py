@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Protocol
 
 from meridian.lib.catalog.agent import AgentProfile
-from meridian.lib.catalog.mars_roots import resolve_mars_roots
+from meridian.lib.catalog.mars_cli import MarsRoot
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.core.domain import AvailableSkillEntry, SkillContent, SkillDeliveryMode
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
@@ -184,6 +184,7 @@ def replay_launch_policy_snapshot(
     project_root: Path,
     harness_registry: HarnessRegistry,
     alias_catalog: dict[str, AliasEntry],
+    mars_root: MarsRoot | None,
 ) -> ReplayedLaunchPolicySnapshot:
 
     snapshot_harness = snapshot.harness.strip()
@@ -198,6 +199,7 @@ def replay_launch_policy_snapshot(
     profile = _snapshot_profile(
         snapshot=snapshot,
         project_root=project_root,
+        mars_root=mars_root,
     )
     resolved_skills = ResolvedSkills(
         skill_names=tuple(skill.name for skill in snapshot.loaded_skills),
@@ -284,18 +286,24 @@ def _snapshot_profile(
     *,
     snapshot: LaunchPolicySnapshot,
     project_root: Path,
+    mars_root: MarsRoot | None,
 ) -> AgentProfile | None:
     if snapshot.agent_profile is None:
         return None
 
     profile = AgentProfile.model_validate(snapshot.agent_profile)
-    # Direct-launch fallback may persist a relative profile path (no project
-    # root at build time); resolve it against the project root on replay so
-    # downstream consumers (e.g. session_agent_path) keep absolute-path parity.
+    # The only relative path ever persisted is the direct-launch fallback's
+    # `.mars/agents/<name>.md` (no root at build time); resolve it in the store of the root
+    # Mars uses now so downstream consumers (e.g. session_agent_path) get an absolute path.
+    # Without Mars, a resume replays its stored contract against the project root.
     if profile.path.is_absolute():
         return profile
-    path = (resolve_mars_roots(project_root).primary / profile.path).resolve()
-    return profile.model_copy(update={"path": path})
+    path = (
+        mars_root.store.joinpath(*profile.path.parts[1:])
+        if mars_root is not None
+        else project_root / profile.path
+    )
+    return profile.model_copy(update={"path": path.resolve()})
 
 
 __all__ = [

@@ -20,8 +20,6 @@ class BuiltinHook(Protocol):
     default_interval: str | None
     # Validates a row's `options` when config loads.
     options_model: type[BaseModel]
-    # Options that make two unnamed rows different targets (and different names).
-    identity_options: tuple[str, ...]
 
     def check_requirements(self) -> tuple[bool, str | None]:
         """Return whether runtime requirements are available."""

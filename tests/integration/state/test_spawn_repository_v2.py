@@ -1,9 +1,11 @@
 import json
+import os
 from pathlib import Path
 
+import psutil
 import pytest
 
-from meridian.lib.state.spawn.dogfood_migration import migrate_dogfood_spawn_rows
+from meridian.lib.state.spawn.legacy_rows import MARKER, repair_legacy_spawn_rows
 from meridian.lib.state.spawn.model import RunBoundaryOutcome, SpawnRecord, TerminalFacts
 from meridian.lib.state.spawn.repository import (
     SpawnStateQuarantined,
@@ -59,6 +61,10 @@ def _record(
         runner_exit=None,
         terminal=terminal,
     )
+
+
+def _rewritten(runtime_root: Path) -> list[str]:
+    return [row.spawn_id for row in repair_legacy_spawn_rows(runtime_root).rewritten]
 
 
 def _seed_state(spawns_dir: Path, record: SpawnRecord) -> None:
@@ -140,7 +146,8 @@ def test_running_dogfood_migration_preserves_old_runner_row_shape(tmp_path: Path
     state_path = spawn_dir / "state.json"
     state_path.write_text(json.dumps(raw), encoding="utf-8")
 
-    assert migrate_dogfood_spawn_rows(tmp_path).migrated == ("p1",)
+    # Active with no launch lock: the row is rewritten but keeps no lock.
+    assert [row.spawn_id for row in repair_legacy_spawn_rows(tmp_path).unsettled] == ["p1"]
 
     migrated = json.loads(state_path.read_text(encoding="utf-8"))
     assert migrated.keys() == (
@@ -168,8 +175,8 @@ def test_dogfood_boundary_rows_quarantine_until_migrated_once(tmp_path: Path) ->
     with pytest.raises(SpawnStateQuarantined, match="run `meridian doctor` to migrate it"):
         read_state(spawns_dir, "p1", include_prompt=False)
 
-    assert migrate_dogfood_spawn_rows(tmp_path).migrated == ("p1",)
-    assert migrate_dogfood_spawn_rows(tmp_path).migrated == ()
+    assert _rewritten(tmp_path) == ["p1", "p2"]  # p2 only gains its launch lock
+    assert _rewritten(tmp_path) == []
 
     loaded = read_state(spawns_dir, "p1", include_prompt=False)
     assert loaded is not None
@@ -198,15 +205,18 @@ def test_dogfood_migration_isolates_malformed_rows(tmp_path: Path) -> None:
         '{"v":3,"id":"p0","entry_chat_id": "c', encoding="utf-8"
     )
 
-    first = migrate_dogfood_spawn_rows(tmp_path)
-    second = migrate_dogfood_spawn_rows(tmp_path)
+    first = repair_legacy_spawn_rows(tmp_path)
+    second = repair_legacy_spawn_rows(tmp_path)
 
-    assert first.migrated == ("p2",)
-    assert [spawn_id for spawn_id, _ in first.failed] == ["p0", "p1"]
-    assert "JSONDecodeError" in first.failed[0][1]
-    assert "ValidationError" in first.failed[1][1]
-    assert second.migrated == ()
-    assert [spawn_id for spawn_id, _ in second.failed] == ["p0", "p1"]
+    assert [row.spawn_id for row in first.rewritten] == ["p2"]
+    assert [row.spawn_id for row in first.failed] == ["p0", "p1"]
+    assert all(row.dogfood for row in first.failed)
+    assert "JSONDecodeError" in first.failed[0].reason
+    assert "ValidationError" in first.failed[1].reason
+    assert second.rewritten == ()
+    assert [row.spawn_id for row in second.failed] == ["p0", "p1"]
+    # No later pass would read them either, so they leave the marker to doctor.
+    assert (tmp_path / MARKER).exists()
     loaded = read_state(spawns_dir, "p2", include_prompt=False)
     assert loaded is not None
     assert loaded.continue_chat_id == "c3"
@@ -241,13 +251,93 @@ def test_legacy_exit_normalization_rejects_invalid_evidence(
         path.write_text(json.dumps(state))
         before = path.read_bytes()
         if flat:
-            result = migrate_dogfood_spawn_rows(runtime)
-            assert result.migrated == ()
-            assert [spawn_id for spawn_id, _ in result.failed] == ["p1"]
+            result = repair_legacy_spawn_rows(runtime)
+            assert result.rewritten == ()
+            assert [row.spawn_id for row in result.failed] == ["p1"]
         else:
             with pytest.raises(SpawnStateQuarantined):
                 read_state(spawns_dir, "p1", include_prompt=False)
         assert path.read_bytes() == before
+
+
+def test_legacy_row_repair_finishes_after_a_crash_and_marks_only_a_clean_pass(
+    tmp_path: Path,
+) -> None:
+    spawns_dir = tmp_path / "spawns"
+    # p1: v2 from 0.3.42 or older. p2: the state a crash between rewriting a row and
+    # creating its launch lock leaves. p3: a lockless row whose old runner is alive.
+    # p4: an active lockless row whose runner is gone.
+    v2_path = spawns_dir / "p1" / "state.json"
+    v2_path.parent.mkdir(parents=True)
+    v2 = {
+        "v": 2,
+        "id": "p1",
+        "chat_id": "c1",
+        "model": "gpt-5.4",
+        "agent": "coder",
+        "harness": "codex",
+        "kind": "child",
+        "runner_pid": 456,
+        "status": "succeeded",
+        "started_at": "2026-05-01T00:00:00Z",
+        # A key this build ignores but 0.3.43 to 0.10.x read.
+        "launch_policy_snapshot": {"model": "gpt-5.4", "harness": "codex", "schema_version": 1},
+        **{f"runner_exit_{name}": None for name in ("code", "status", "error", "at")},
+        "exit_code": 0,
+        "finished_at": "2026-05-01T00:01:00Z",
+        "terminal_origin": "runner",
+        "cost_is_estimate": False,
+        **dict.fromkeys(
+            (
+                "duration_secs",
+                "total_cost_usd",
+                "input_tokens",
+                "output_tokens",
+                "cache_read_input_tokens",
+                "cache_creation_input_tokens",
+                "reasoning_tokens",
+                "error",
+            )
+        ),
+    }
+    v2_path.write_text(json.dumps(v2), encoding="utf-8")
+    before = read_state(spawns_dir, "p1", include_prompt=False)
+    _seed_state(spawns_dir, _record("p2", status="succeeded"))
+    _seed_state(spawns_dir, _record("p4"))
+    live = _record("p3", status="succeeded").model_copy(
+        update={
+            "runner_pid": os.getpid(),
+            "runner_created_at_epoch": psutil.Process().create_time(),
+        }
+    )
+    _seed_state(spawns_dir, live)
+    live_bytes = (spawns_dir / "p3" / "state.json").read_bytes()
+
+    first = repair_legacy_spawn_rows(tmp_path)
+
+    assert [row.spawn_id for row in first.rewritten] == ["p1", "p2"]
+    assert [row.spawn_id for row in first.deferred] == ["p3"]
+    assert [row.spawn_id for row in first.unsettled] == ["p4"]
+    assert (spawns_dir / "p3" / "state.json").read_bytes() == live_bytes
+    assert not (spawns_dir / "p3" / "launch.lock").exists()
+    assert not (tmp_path / MARKER).exists()
+    rewritten_v2 = json.loads(v2_path.read_text(encoding="utf-8"))
+    assert rewritten_v2["v"] == 3
+    assert rewritten_v2["launch_policy_snapshot"]["schema_version"] == 1
+    assert read_state(spawns_dir, "p1", include_prompt=False) == before
+
+    # The old runner exits.
+    dead = json.loads(live_bytes)
+    dead["runner_created_at_epoch"] = 1.0
+    (spawns_dir / "p3" / "state.json").write_text(json.dumps(dead), encoding="utf-8")
+    second = repair_legacy_spawn_rows(tmp_path)
+
+    assert [row.spawn_id for row in second.rewritten] == ["p3"]
+    assert second.done
+    assert (tmp_path / MARKER).exists()
+    assert all((spawns_dir / spawn_id / "launch.lock").exists() for spawn_id in ("p1", "p2", "p3"))
+    assert not (spawns_dir / "p4" / "launch.lock").exists()
+    assert repair_legacy_spawn_rows(tmp_path).rewritten == ()
 
 
 def test_write_state_locked_refuses_to_overwrite_terminal_state(tmp_path: Path) -> None:

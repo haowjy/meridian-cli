@@ -3,21 +3,22 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.catalog.mars_roots import (
+from meridian.lib.catalog.mars_cli import (
     MARS_AGENT_NOT_FOUND_CODES,
     MarsAgentNotFoundError,
-    MarsRoots,
-    ensure_resolved_mars_root,
+    MarsRoot,
+    legacy_user_root,
     mars_content_args,
+    mars_location,
+    parse_mars_root,
     resolve_mars_executable,
-    resolve_mars_roots,
 )
-from meridian.lib.config.project_root import resolve_project_root_resolution
 
 _logger = logging.getLogger(__name__)
 
@@ -54,13 +55,6 @@ class MarsAgentEntry(BaseModel):
     fanout: bool = False
 
 
-def _prepare_mars_roots(project_root: Path | None, *, executable: str) -> MarsRoots:
-    project = resolve_project_root_resolution(project_root).project_root
-    roots = resolve_mars_roots(project)
-    ensure_resolved_mars_root(roots, executable=executable)
-    return roots
-
-
 def _is_head_constraint(value: object) -> bool:
     if not isinstance(value, str):
         return False
@@ -80,16 +74,11 @@ def check_upgrade_availability(project_root: Path | None = None) -> UpgradeAvail
     if executable is None:
         return None
 
-    try:
-        mars_roots = _prepare_mars_roots(project_root, executable=executable)
-    except RuntimeError:
-        return None
-
-    command = [executable, "outdated", "--json", "--root", mars_roots.primary.as_posix()]
-
+    location = mars_location(project_root)
     try:
         result = subprocess.run(
-            command,
+            location.command(executable, "outdated", "--json"),
+            cwd=location.cwd,
             check=False,
             capture_output=True,
             text=True,
@@ -179,22 +168,16 @@ def mars_resolve_agent(project_root: Path, name: str) -> Path:
     executable = resolve_mars_executable()
     if executable is None:
         raise ValueError("mars agents show failed: mars is not installed")
+    location = mars_location(project_root)
     try:
-        mars_roots = _prepare_mars_roots(project_root, executable=executable)
-    except RuntimeError as exc:
-        raise ValueError(f"mars agents show failed: {exc}") from exc
-    command = [
-        executable,
-        "agents",
-        "show",
-        name,
-        "--json",
-        "--root",
-        mars_roots.primary.as_posix(),
-        *mars_content_args(mars_roots),
-    ]
-    try:
-        result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(
+            location.command(executable, "agents", "show", name, "--json", *mars_content_args()),
+            cwd=location.cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
         raise ValueError(f"mars agents show failed: {exc}") from exc
     try:
@@ -217,8 +200,22 @@ def mars_resolve_agent(project_root: Path, name: str) -> Path:
     return Path(source_path)
 
 
-def mars_list_agents(project_root: Path) -> tuple[MarsAgentEntry, ...]:
-    """List every installed agent profile via ``mars agents list``.
+class MarsAgentInventory(BaseModel):
+    """``mars agents list``: every agent the lookup layers hold, and the root Mars chose."""
+
+    model_config = ConfigDict(frozen=True)
+
+    root: MarsRoot
+    agents: tuple[MarsAgentEntry, ...]
+
+    def installs_natively(self, harness: str) -> bool:
+        """Whether the last sync installed at least one agent natively into ``harness``."""
+
+        return any(harness in agent.native_harnesses for agent in self.agents)
+
+
+def mars_agent_inventory(project_root: Path | None) -> MarsAgentInventory:
+    """List every agent profile via ``mars agents list``.
 
     Raises ``ValueError`` when Mars cannot answer: the listing is the caller's whole
     result, so an empty answer would be a wrong one.
@@ -227,25 +224,11 @@ def mars_list_agents(project_root: Path) -> tuple[MarsAgentEntry, ...]:
     executable = resolve_mars_executable()
     if executable is None:
         raise ValueError("mars agents list failed: mars is not installed")
-
-    try:
-        mars_roots = _prepare_mars_roots(project_root, executable=executable)
-    except RuntimeError as exc:
-        raise ValueError(f"mars agents list failed: {exc}") from exc
-
-    command = [
-        executable,
-        "agents",
-        "list",
-        "--json",
-        "--root",
-        mars_roots.primary.as_posix(),
-    ]
-    command.extend(mars_content_args(mars_roots))
-
+    location = mars_location(project_root)
     try:
         result = subprocess.run(
-            command,
+            location.command(executable, "agents", "list", "--json", *mars_content_args()),
+            cwd=location.cwd,
             check=False,
             capture_output=True,
             text=True,
@@ -253,20 +236,31 @@ def mars_list_agents(project_root: Path) -> tuple[MarsAgentEntry, ...]:
         )
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
         raise ValueError(f"mars agents list failed: {exc}") from exc
-    if result.returncode != 0:
-        detail = (result.stderr or "").strip() or f"exit code {result.returncode}"
-        raise ValueError(f"mars agents list failed: {detail}")
-
     try:
-        payload = json.loads(result.stdout)
+        payload: object = json.loads(result.stdout)
     except (json.JSONDecodeError, ValueError) as exc:
-        raise ValueError(f"mars agents list returned malformed JSON: {exc}") from exc
+        if result.returncode == 0:
+            raise ValueError(f"mars agents list returned malformed JSON: {exc}") from exc
+        payload = None
+    if result.returncode != 0:
+        # Under --json, Mars prints its error as `{"error": {"message": ...}}` on stdout.
+        error = (
+            cast("dict[str, object]", payload).get("error") if isinstance(payload, dict) else None
+        )
+        message = (
+            cast("dict[str, object]", error).get("message") if isinstance(error, dict) else None
+        )
+        detail = (
+            message
+            if isinstance(message, str) and message.strip()
+            else (result.stderr or "").strip() or f"exit code {result.returncode}"
+        )
+        raise ValueError(f"mars agents list failed: {detail}")
     agents_raw = (
         cast("dict[str, object]", payload).get("agents") if isinstance(payload, dict) else None
     )
     if not isinstance(agents_raw, list):
         raise ValueError("mars agents list returned no `agents` array")
-
     entries: list[MarsAgentEntry] = []
     seen: set[str] = set()
     for row_obj in cast("list[object]", agents_raw):
@@ -295,7 +289,57 @@ def mars_list_agents(project_root: Path) -> tuple[MarsAgentEntry, ...]:
                 fanout=row.get("fanout") is True,
             )
         )
-    return tuple(sorted(entries, key=lambda entry: entry.name))
+    root = parse_mars_root(cast("object", payload))
+    if root is None:
+        raise ValueError("mars agents list reported no `root`")
+    return MarsAgentInventory(
+        root=root,
+        agents=tuple(sorted(entries, key=lambda entry: entry.name)),
+    )
+
+
+def mars_list_agents(project_root: Path | None) -> tuple[MarsAgentEntry, ...]:
+    return mars_agent_inventory(project_root).agents
+
+
+def try_mars_agent_inventory(project_root: Path | None) -> MarsAgentInventory | None:
+    """``mars_agent_inventory`` for a launch, which goes on without it when Mars cannot answer."""
+
+    try:
+        return mars_agent_inventory(project_root)
+    except ValueError:
+        _logger.debug("mars agents list unavailable", exc_info=True)
+        return None
+
+
+@dataclass(frozen=True)
+class MarsRootReport:
+    """What ``meridian config``, ``context`` and ``doctor`` report about Mars here."""
+
+    root: MarsRoot | None
+    # ``~/.meridian/mars`` while lookups still read it as ``--fallback-root``.
+    fallback: Path | None
+    # Why Mars could not say which root it uses (no binary, or Mars's own error); None with a root.
+    error: str | None = None
+
+    @property
+    def fallback_label(self) -> Literal["active", "n/a"]:
+        return "n/a" if self.fallback is None else "active"
+
+    @property
+    def user_root(self) -> Path | None:
+        """The fallback beneath a project; None at the user level ("same as primary")."""
+
+        return None if self.root is not None and self.root.kind == "user" else self.fallback
+
+
+def mars_root_report(project_root: Path | None) -> MarsRootReport:
+    fallback = legacy_user_root()
+    try:
+        inventory = mars_agent_inventory(project_root)
+    except ValueError as exc:
+        return MarsRootReport(root=None, fallback=fallback, error=str(exc))
+    return MarsRootReport(root=inventory.root, fallback=fallback)
 
 
 def _string_tuple(value: object) -> tuple[str, ...]:
@@ -343,9 +387,14 @@ def format_upgrade_availability(
 
 __all__ = [
     "MarsAgentEntry",
+    "MarsAgentInventory",
+    "MarsRootReport",
     "UpgradeAvailability",
     "check_upgrade_availability",
     "format_upgrade_availability",
+    "mars_agent_inventory",
     "mars_list_agents",
     "mars_resolve_agent",
+    "mars_root_report",
+    "try_mars_agent_inventory",
 ]

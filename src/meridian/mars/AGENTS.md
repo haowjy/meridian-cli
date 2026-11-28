@@ -1,17 +1,22 @@
 # Content Meridian ships for Mars
 
-`meridian mars sync` runs `mars provide meridian@<version>=<this directory>`. Mars reads
-three subdirectories: `skills/` (Meridian's own skills, for every harness), `hooks/` and
-`mcp/` (copied only into targets whose harness Meridian does not launch, today `.agy`).
+Mars reads this directory in place; nothing copies it into a project's `.mars/`.
 
-`agents/` is not provided: Mars reads it in place as the last layer of every by-name lookup
-(`--provided-root <this directory>`, sent by `mars_content_args` in `lib/catalog/mars_roots.py`).
-It holds profiles only; any other `*.md` there, an `AGENTS.md` included, would be read as an
-agent.
+- Lookups (launch bundles, `mars agents`, `mars skills`) get it as `--provided-root <this
+  directory>`, the last layer of every by-name lookup (`mars_content_args` in
+  `lib/catalog/mars_cli.py`). `meridian skills` reads `skills/` from the wheel itself
+  (`lib/bundled_skills.py`).
+- Every `meridian mars` command that syncs (`MARS_SYNCING_COMMANDS`, `meridian init`'s `add`
+  and `link` included) gives it to the sync as `--provided-root meridian@<version>=<this
+  directory>` (`provided_sync_args`): `skills/`, `agents/`, `hooks/` and `mcp/` become the host
+  layer, installed only into targets whose harness Meridian does not launch, today `.agy`.
 
-- Provide this directory, never its parent. A provided directory with none of the three
-  subdirectories retracts everything Meridian provided, so moving or emptying one is one
-  change with the repoint in `lib/bundled_skills.py`.
+`agents/` holds profiles only; any other `*.md` there, an `AGENTS.md` included, would be read as
+an agent.
+
+- Pass this directory, never its parent. A sync's host layer is what this directory holds, so
+  moving or emptying a subdirectory retracts it from every project's `.agy` on the next sync;
+  move it in one change with `provided_dir` in `lib/catalog/mars_cli.py`.
 - Every `hook.toml` says `visibility = "exported"`, or the dependency reader skips it.
 - `hooks/meridian-session/guard.sh` hard-codes the state paths in `lib/harness/agy/state.py`
   (requests, rows, `briefed` and `seen` markers, the inbox file, and the

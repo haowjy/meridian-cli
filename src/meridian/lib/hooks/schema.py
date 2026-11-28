@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import re
-from collections.abc import Callable, Mapping
-from typing import Annotated, get_args
+from collections.abc import Callable
+from pathlib import Path
+from typing import Annotated, ClassVar, get_args
 
 from pydantic import (
     BaseModel,
@@ -13,11 +12,15 @@ from pydantic import (
     Field,
     StringConstraints,
     ValidationError,
-    field_validator,
     model_validator,
 )
 
-from meridian.lib.config.errors import config_validation_error, warn_unknown_model_keys
+from meridian.lib.config.errors import (
+    config_validation_error,
+    warn_config,
+    warn_unknown_model_keys,
+)
+from meridian.lib.config.model_base import ConfigModel
 from meridian.lib.hooks.builtin import BUILTIN_HOOKS, BuiltinHook
 from meridian.lib.hooks.types import (
     EVENTS,
@@ -32,8 +35,6 @@ from meridian.lib.hooks.types import (
 from meridian.lib.utils.json_shapes import json_list, json_object
 
 _INTERVAL_PATTERN = re.compile(r"^\d+[smhd]$")
-_HOOK_NAME_COMPONENT_PATTERN = re.compile(r"[^a-z0-9._-]+")
-_HOOK_NAME_REPEATED_DASH_PATTERN = re.compile(r"-+")
 _KNOWN_HOOK_EVENTS = frozenset(get_args(HookEventName))
 _KNOWN_SPAWN_KINDS = frozenset(get_args(SpawnKind))
 _KNOWN_SPAWN_STATUSES = frozenset(get_args(SpawnStatus))
@@ -41,8 +42,8 @@ _WHEN_FIELDS: tuple[HookWhenField, ...] = ("status", "agent", "kind")
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
-# Hook names and keys removed from config; each maps to its replacement. Rows
-# using them are rejected with an error that names it.
+# Hook names and keys removed from config; each maps to its replacement or to what to do
+# instead. Rows using them are rejected with an error that names it.
 _REMOVED_EVENT_NAMES: dict[str, HookEventName] = {
     "spawn.start": "spawn.started",
     "spawn.running": "spawn.started",
@@ -51,6 +52,16 @@ _REMOVED_EVENT_NAMES: dict[str, HookEventName] = {
     "work.started": "work.activated",
     "session.responded": "notify.your_turn",
     "session.cache_expiring": "notify.cache_expiring",
+}
+_REMOVED_ROW_KEYS: dict[str, str] = {
+    "failure_policy": "hook failures always continue",
+}
+# Removed builtins an old config may still name: the row is skipped with a warning that
+# says what to do.
+_SKIPPED_BUILTINS: dict[str, str] = {
+    "git-autosync": (
+        "the sync daemon syncs git contexts now (see `meridian sync status`); delete this row"
+    ),
 }
 
 
@@ -145,10 +156,14 @@ class HookWhenSpec(BaseModel):
     kind: SpawnKindTupleSpec | None = None
 
 
-class HookSpec(BaseModel):
+class HookSpec(ConfigModel):
     """Validated file representation of one configured hook."""
 
     model_config = ConfigDict(frozen=True, strict=True, extra="ignore")
+    config_ignored_keys: ClassVar[dict[str, str]] = {
+        "remote": "it belonged to the removed `git-autosync` hook; delete it",
+        "exclude": "it belonged to the removed `git-autosync` hook; delete it",
+    }
 
     name: NonEmptyString | None = None
     builtin: NonEmptyString | None = None
@@ -160,23 +175,18 @@ class HookSpec(BaseModel):
     priority: int = 0
     require_serial: bool = False
     when: HookWhenSpec | None = None
-    exclude: tuple[NonEmptyString, ...] = ()
-    remote: NonEmptyString | None = None
     options: dict[str, object] = Field(default_factory=dict)
 
     @model_validator(mode="before")
     @classmethod
-    def _reject_failure_policy(cls, data: object) -> object:
+    def _reject_removed(cls, data: object) -> object:
         row = json_object(data)
-        if row is not None and "failure_policy" in row:
-            raise ValueError("`failure_policy` was removed; hook failures always continue")
+        if row is None:
+            return data
+        for key, instead in _REMOVED_ROW_KEYS.items():
+            if key in row:
+                raise ValueError(f"`{key}` was removed; {instead}")
         return data
-
-    @field_validator("exclude", mode="before")
-    @classmethod
-    def _tuple_exclude(cls, value: object) -> object:
-        values = json_list(value)
-        return tuple(values) if values is not None else value
 
 
 def hook_row_values(raw_value: object, *, source: str) -> tuple[object, ...]:
@@ -190,44 +200,23 @@ def hook_row_values(raw_value: object, *, source: str) -> tuple[object, ...]:
     return tuple(values)
 
 
-def normalize_hook_row(raw_value: object, *, source: str) -> HookSpec:
+def normalize_hook_row(raw_value: object, *, source: str, file: Path) -> HookSpec | None:
+    """Validate one row; ``None`` for a row that is skipped with a warning."""
 
-    warn_unknown_model_keys(raw_value, model=HookSpec, source=source)
+    row = json_object(raw_value)
+    if row is not None:
+        builtin = _normalized_string(row.get("builtin"))
+        if isinstance(builtin, str) and builtin in _SKIPPED_BUILTINS:
+            warn_config(
+                f"Skipping '{source}' in '{file}': builtin `{builtin}` was removed; "
+                f"{_SKIPPED_BUILTINS[builtin]}."
+            )
+            return None
+    warn_unknown_model_keys(raw_value, model=HookSpec, source=source, file=file)
     try:
         return HookSpec.model_validate(raw_value)
     except ValidationError as error:
         raise config_validation_error(error, source=source) from None
-
-
-def _slugify_hook_name_component(raw: str) -> str:
-    normalized = raw.strip().lower()
-    normalized = _HOOK_NAME_COMPONENT_PATTERN.sub("-", normalized)
-    normalized = _HOOK_NAME_REPEATED_DASH_PATTERN.sub("-", normalized)
-    normalized = normalized.strip("-.")
-    return normalized[:48].strip("-.")
-
-
-def _synthesize_builtin_hook_name(builtin: BuiltinHook, options: Mapping[str, object]) -> str:
-
-    identity = {
-        key: options[key] for key in builtin.identity_options if options.get(key) is not None
-    }
-    if not identity:
-        return builtin.name
-
-    payload = json.dumps(
-        identity,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-        default=str,
-    )
-    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:10]
-    slug_source = next(
-        (value for value in identity.values() if isinstance(value, str) and value.strip()), ""
-    )
-    slug = _slugify_hook_name_component(slug_source) if slug_source else ""
-    return f"{builtin.name}:{slug}-{digest}" if slug else f"{builtin.name}:{digest}"
 
 
 def _parse_when(spec: HookWhenSpec | None) -> HookWhen | None:
@@ -282,8 +271,6 @@ def hooks_from_spec(
 
     command = spec.command
     options = dict(spec.options)
-    if spec.remote is not None:
-        options.setdefault("remote", spec.remote)
 
     if command is not None and spec.builtin is not None:
         raise ValueError(
@@ -313,7 +300,7 @@ def hooks_from_spec(
     if name is None:
         if builtin is None:
             raise ValueError(f"Invalid hook config '{row_source}': 'name' is required.")
-        name = _synthesize_builtin_hook_name(builtin, options)
+        name = builtin.name
 
     when = _parse_when(spec.when)
     events: tuple[HookEventName, ...]
@@ -373,9 +360,7 @@ def hooks_from_spec(
             priority=spec.priority,
             require_serial=spec.require_serial,
             when=when,
-            exclude=spec.exclude,
             options=options,
-            remote=spec.remote,
         )
         for event in events
     )

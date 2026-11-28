@@ -1,5 +1,212 @@
 # Upgrade notes
 
+## Mars chooses the root; `~/.meridian/mars` retires
+
+Meridian 0.28.1 already runs Mars 0.41.0, which has a user level: your own packages live in
+`~/.mars/mars.toml`, with its `config.toml` and store in the same folder (`MARS_HOME` moves
+it). This release is Meridian's side of it. Mars's user `config.toml` moves there from where
+Mars 0.40 kept it (`~/.config/mars/`, or `$XDG_CONFIG_HOME/mars/`, on Linux;
+`~/Library/Application Support/mars/` on macOS); Mars reads the old file for one minor and
+warns with the move. Mars now chooses the root itself: Meridian runs it in your working
+directory and names its project only as where Mars's walk-up starts. Mars takes the nearest
+project `mars.toml`, else the user level for a lookup. Your home
+directory's `mars.toml` is never a project any more; Mars warns where it finds one and its
+[guide](https://github.com/haowjy/mars-agents/blob/main/docs/cli/user-level.md#moving-a-home-project)
+says how to move it. The migration script below does those steps for you.
+
+- **`meridian mars --user …` addresses the Mars user level**, forwarded as `mars --user …`,
+  instead of Meridian's own project at `~/.meridian/mars`. A Mars older than 0.41.0 on `PATH`
+  gets an upgrade message instead of a usage error.
+- **User packages reach projects through the project's sync.** `meridian mars sync` in a
+  project installs your user-level items beside the project's packages (the project wins a name
+  both have) and keeps them out of its commits. Run it once in each project after moving your
+  packages. Outside any project, launches read the user level's store; it never restricts which
+  harness a launch uses.
+- **Move what `~/.meridian/mars` holds with the migration script.** Meridian never deletes or
+  writes that folder. While it exists, this release still reads it (as Mars's deprecated
+  `--fallback-root`), and every command that asks Mars for agents or skills (launches,
+  `config show`, `context`, `doctor`, `meridian mars agents`) warns once that the next minor
+  release stops reading it; the `meridian mars` lookups also print Mars's own line that
+  `--fallback-root` is deprecated. Run the script that moves an old setup into the Mars user
+  level:
+
+  ```bash
+  uv run https://raw.githubusercontent.com/haowjy/meridian-cli/main/scripts/migrate-to-dot-mars.py
+  ```
+
+  It needs Mars 0.41.0 or later (Meridian 0.29.0 or later bundles it). On its own it is a dry
+  run: it prints each step with its real paths and changes nothing. Add `--apply` to run the
+  steps; it stops at the first one that fails and says what to fix, and a re-run skips what is
+  already done. Before it changes anything, it copies every path it will move, rewrite or
+  delete, including the harness config files whose hook and MCP entries it unlinks, into a new
+  folder, `~/.mars-migration-backup/<UTC time>/`. A folder still named `….partial` belongs to a
+  run that stopped while copying and changed nothing. It moves:
+  - an old Mars home project (`~/mars.toml`, `~/mars.local.toml`, `~/mars.lock`, and its store
+    in `~/.mars`): it runs `mars --root ~ unlink` for each target the project's locks record,
+    carries both manifests (without `targets`, relative paths made absolute) into the user
+    level's `mars.toml` and `mars.local.toml` and `~/.mars-src` into the user level's
+    `.mars-src/`, then deletes the old files;
+  - Mars 0.40's `config.toml` and `curated.toml` into the user level, from where Mars 0.40 read
+    them: `$MARS_CONFIG_DIR`, else `$XDG_CONFIG_HOME/mars/` or `~/.config/mars/` on Linux and
+    `~/Library/Application Support/mars/` on macOS (Mars 0.40 ignored `XDG_CONFIG_HOME` there).
+    A macOS `~/.config/mars/` file, which Mars never read, moves only into a user level that has
+    none, with a note that its settings never applied;
+  - `~/.meridian/mars`: its dependencies into the user level's `mars.toml`, its `.mars-src/`
+    into the user level's, and its `[settings]`, `[models]`, `[agents]` and `[skills]` into
+    Mars's user `config.toml`; then it deletes the folder, which the backup keeps.
+
+  It honors `MARS_HOME`. Before changing anything it has Mars validate the files it would
+  write, and it stops when both sides hold one name (a dependency, a `.mars-src/` item, a
+  config key, `curated.toml`) with different content; the same content on both sides is kept
+  once. It then runs `mars --user sync` and ends with what to do next: `meridian mars sync` in
+  each project, and any symlink under `~/.local/bin` whose target is gone, with the
+  `ln -sfn` that points it at the user level's copy.
+- **Meridian's skills are read in place.** `meridian skills` reads the installed Meridian
+  package only and no longer asks Mars to copy skills into `.mars/skills/`; launches read the
+  bundle directly. Every passthrough command that syncs (`sync`, `add`, `link`, `upgrade`, …)
+  hands the bundle to the sync for `.agy`, and none runs `mars provide` any more. Old copies Mars made
+  are no longer read; the next Mars minor removes them.
+- **JSON.** `meridian config show`, `meridian context` and `meridian doctor` add `mars`, the
+  root Mars chose (`kind` and `path`; the user level's store and `config.toml` are in its `path`).
+  `mars_fallback`, `mars_user_root` and doctor's `mars_roots` are deprecated and go in the
+  next minor release: `mars_fallback`, `mars_user_root` and `mars_roots.user` describe only
+  `~/.meridian/mars`, and `mars_roots.primary` and `.scope` repeat the root Mars chose.
+  `mars_root` and `mars_scope` stay; with Mars unavailable they, `mars`, and doctor's
+  `agents_dir`/`skills_dir` are `null`.
+  Doctor no longer reports `missing_skills_directories` or
+  `missing_agent_profile_directories`; it reports `legacy_user_mars_root` (payload `path`, with
+  the same message as the lookup warning), and `mars_unavailable` with Mars's own error when Mars can't say which root it uses
+  (`config show` adds that error as `mars_error`).
+- **Rollback.** Both rollbacks go back to `~/.meridian/mars` for your own packages. After the
+  migration script ran, first restore everything it moved from its backup: the commands it
+  prints at the end, which are
+
+  ```bash
+  rm -rf ~/.mars                                    # or $MARS_HOME
+  cp -a ~/.mars-migration-backup/<UTC time>/home/. ~/
+  cp -a ~/.mars-migration-backup/<UTC time>/root/. /    # only if it has root/
+  ```
+
+  using the oldest complete backup when a run was cut short and run again; it holds the setup
+  as it was before the first run. That brings back `~/mars.toml`, `~/mars.lock`, `~/.mars-src`,
+  the old `~/.mars` store, the Mars 0.40 config files, what was unlinked from the harness
+  folders and `~/.meridian/mars`.
+  - *To 0.28.1*, which runs Mars 0.41.0: user-level items a project sync installed stay in
+    that project. Outside a project, lookups read `~/.meridian/mars` again, so user-level items
+    are not found there, and `meridian mars --user …` addresses `~/.meridian/mars` instead of
+    `~/.mars`. Its commands run `mars provide` again, which writes copies of Meridian's skills
+    into a project's `.mars/skills/`; nothing reads them, and this release leaves them alone.
+    Its lookups print Mars's `--fallback-root` deprecation line.
+  - *To 0.28.0 or older*, which runs Mars 0.40: that Mars ignores the user level. Its first
+    sync in a project removes the user-level items the new Mars installed there (they are
+    Mars's own records); this release puts them back on its next sync.
+
+## `git-autosync` rows are skipped and `meridian sync conflict` is gone
+
+0.24.0 replaced the `git-autosync` hook with the sync daemon and kept what it removed
+working, unused, until the next minor (see
+[Git contexts sync through a daemon](#git-contexts-sync-through-a-daemon-not-the-git-autosync-hook)).
+This release removes it:
+
+- **A `[[hooks]] builtin = "git-autosync"` row is skipped.** Delete it; the sync daemon
+  syncs git contexts now (`meridian sync status` shows them). The other rows load and run,
+  and `meridian hooks list`, `hooks check`, `hooks run <other hook>` and `meridian doctor`
+  exit 0. Each command prints once on stderr:
+
+  ```
+  Skipping 'project.hooks[1]' in '/path/to/meridian.toml': builtin `git-autosync` was removed; the sync daemon syncs git contexts now (see `meridian sync status`); delete this row.
+  ```
+
+  Running the row itself (`meridian hooks run git-autosync`, or the name 0.28 generated
+  for it) exits 1 with `Hook 'git-autosync' not found`, since the row no longer loads.
+  Hooks fired during a spawn or session log the same line and run the other rows. The
+  `inbox.received` hook process has no stderr, so a skipped row in its user config leaves
+  no trace there.
+- **`remote` and `exclude` on a `[[hooks]]` row are ignored.** The row still loads and runs;
+  delete the key. Each prints:
+
+  ```
+  Ignoring 'project.hooks[1].remote' in '/path/to/meridian.toml': it belonged to the removed `git-autosync` hook; delete it.
+  ```
+
+  A `git-autosync` row carrying them gets only the skip warning.
+- **`meridian sync conflict list|show|resolve` are gone** and fail with
+  `Unknown command "conflict"`, exit 1. `meridian sync status` shows a stopped clone, and
+  `meridian sync now <context>` shows both sides of each conflicting file.
+- **`Hook.remote` and `Hook.exclude` are gone from `meridian.plugin_api`.** A plugin reads
+  `Hook.options`.
+- **`meridian doctor --prune` no longer removes the old hook's files.** Delete any
+  `~/.meridian/locks/clone-*.lock` and `~/.meridian/projects/*/autosync/` that are left.
+
+## `primary.model` and `primary.harness` warn
+
+Meridian stopped reading `[primary] model` and `[primary] harness` in 2026-05 and ignored
+them without a word; a value that wasn't a string stopped every command. Now each one,
+whatever its value, is still ignored and prints once per command, naming the file:
+
+```
+Ignoring 'primary.model' in '/path/to/meridian.toml': Meridian no longer reads it; delete it.
+```
+
+Delete the key. To choose a model or harness, set `primary.agent`, pass `--model` or
+`--harness`, or set `default_model` / `default_harness` under `[settings]` in `mars.toml`.
+
+## Old spawn rows are rewritten in the current format
+
+Each spawn's `state.json` stays in the format the build that last wrote it used, and a
+finished row is never written again. So a row from months ago still carries an old format,
+and every command converts it in memory on each read. This release rewrites such rows on
+disk once, per project. It changes nothing a command shows. You need do nothing; run
+`meridian doctor` once in a project to finish it now and see what it left.
+
+- **What it rewrites.** Rows from 0.3.42 and older (state `v2`) become `v3`. Rows with
+  `entry_chat_id`, `exit_chat_id`, `exit_identity` or `trampoline_successor_id` fields (from
+  unreleased development builds) are migrated as `meridian doctor` already did; this pass
+  replaces that migration. Finished rows without the `spawns/<id>/launch.lock` file every
+  newer launch creates (mostly from before 0.10.18) get one. A rewritten row keeps every
+  field it had, including ones this build no longer reads.
+- **What it leaves.** A row a newer Meridian wrote, and history restored from an archive.
+  A row whose runner from the older build may still be running waits until that runner
+  exits. A row without a launch lock that is still `running` although its runner is gone
+  gets no lock: Meridian never records an outcome for such a row on its own, and the
+  lock would let it. `meridian spawn cancel <id>` records the outcome; the next
+  `meridian doctor` finishes the row. A row this build cannot read stays as it is.
+- **When it runs.** In the background when you launch a primary session, until one pass
+  leaves only rows it can never change (the only thing it waits for is an old runner that
+  may be alive); it then writes `~/.meridian/projects/<project>/legacy-spawn-rows-v1.json`
+  and stops running at launch. `meridian doctor` runs it every time. A pass that is killed
+  resumes on the next one. If an older Meridian still runs against the same home, it can
+  write an old-format row after that; this build reads it as before, and `meridian doctor`
+  rewrites it.
+- **What you see.** Until a project's rows are rewritten, the first command that reads one
+  warns once:
+
+  ```
+  …/spawns/p12/state.json is a spawn row in an older format (v2, or without a launch lock: mostly from before 0.10.18); `meridian doctor` rewrites such rows, or says why it can't.
+  ```
+
+  `meridian doctor` lists `legacy_spawn_rows` under `repaired` (and `dogfood_spawn_rows` for
+  the development-build rows, as before), with a `legacy_spawn_rows` line naming each row it
+  rewrote and what changed, e.g. `p1 (v2 to v3, launch lock)`. What it left comes as warnings: `legacy_spawn_rows_failed` (could not convert,
+  with the reason), `legacy_spawn_rows_deferred` (old runner may be alive),
+  `legacy_spawn_rows_unsettled` (still running with no runner; cancel it, so these rows are
+  no longer listed under `dead_spawns_unfinalized`, whose `--kill-orphans` does not settle
+  them), and, unchanged,
+  `dogfood_spawn_rows_failed` and `dogfood_index_rearm_failed`. In `--json`,
+  `legacy_spawn_rows` is a new field beside `legacy_pi_sessions`.
+- **The one-time native session import says what it found.** When it finds chats an older
+  Meridian recorded without their native session store, its summary line becomes a warning:
+  `warning: found N chat(s) an older Meridian recorded without their native session store in
+  …/sessions.jsonl; imported native sessions for X of Y existing chats; …`.
+- **The chat journal is not rewritten.** The `harness_session_ids` arrays old releases left in
+  `sessions.jsonl` (0.5.0 to 0.6.7, inside restored history records) are all empty.
+
+Rolling back works to 0.3.43 or later: 0.10.17, 0.17.5, 0.18.0 and 0.28.3 read every
+rewritten row and show what they showed before, and the development-build rows they used
+to quarantine now read. 0.10.17 ignores `launch.lock`. 0.3.42 and older cannot read a
+rewritten row (`Input should be 2 [type=literal_error, input_value=3, input_type=int]`), as
+they already cannot read any row a later build wrote.
+
 ## `meridian message` replaces `meridian spawn message`
 
 New in this release. `meridian message <address> "..."` sends to a running session by its

@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.catalog.mars_roots import resolve_mars_executable
+from meridian.lib.catalog.mars_cli import resolve_mars_executable
 from meridian.lib.ops.mars import mars_list_agents
 
 pytestmark = pytest.mark.slow

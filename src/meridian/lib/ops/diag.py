@@ -6,14 +6,24 @@ from typing import Literal
 import structlog
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.catalog.mars_roots import MarsRoots, mars_content_roots
+from meridian.lib.catalog.mars_cli import (
+    MarsRoot,
+    legacy_user_root,
+    legacy_user_root_message,
+    mark_legacy_user_root_reported,
+)
 from meridian.lib.config.loader import load_user_config
 from meridian.lib.core.depth import is_root_side_effect_process
 from meridian.lib.core.domain import is_active_spawn_status
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.plugin_hosted import is_plugin_hosted
+from meridian.lib.hooks.config import load_hooks_config_report
 from meridian.lib.ops.config_surface import build_config_surface
-from meridian.lib.ops.mars import check_upgrade_availability, format_upgrade_availability
+from meridian.lib.ops.mars import (
+    check_upgrade_availability,
+    format_upgrade_availability,
+    mars_root_report,
+)
 from meridian.lib.ops.pruning import (
     AdHocProjectDir,
     OrphanProjectDir,
@@ -34,7 +44,8 @@ from meridian.lib.state import spawn_store, work_repository, work_store
 from meridian.lib.state.lock_gc import LockGcStats, gc_orphaned_locks
 from meridian.lib.state.session_fold import UnsupportedSessionFormat
 from meridian.lib.state.session_store import cleanup_stale_sessions
-from meridian.lib.state.spawn.dogfood_migration import migrate_dogfood_spawn_rows
+from meridian.lib.state.spawn.legacy_rows import MARKER as LEGACY_ROWS_MARKER
+from meridian.lib.state.spawn.legacy_rows import LegacyRow, repair_legacy_spawn_rows
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_status import overlay_derived
 from meridian.lib.state.user_paths import get_user_home
@@ -69,6 +80,16 @@ class TelemetryCleanupStats(BaseModel):
     deleted_bytes: int = 0
 
 
+class DoctorMarsRoots(BaseModel):
+    """Deprecated (``mars`` replaces it); goes in the next minor release."""
+
+    model_config = ConfigDict(frozen=True)
+
+    primary: str | None
+    scope: Literal["project", "user"] | None
+    user: str | None = None
+
+
 class DoctorOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -77,12 +98,14 @@ class DoctorOutput(BaseModel):
     project_root_source: str
     identity_tier: Literal["committed", "adhoc"]
     project_id: str | None
-    mars_roots: MarsRoots
+    # The root Mars chooses here, as Mars reports it; None when Mars cannot answer.
+    mars: MarsRoot | None
+    mars_roots: DoctorMarsRoots
     runtime_root: str | None
     runtime_root_source: str
     runs_checked: int
-    agents_dir: str
-    skills_dir: str
+    agents_dir: str | None
+    skills_dir: str | None
     orphan_project_dirs: tuple[OrphanProjectDir, ...] = ()
     adhoc_project_dirs: tuple[AdHocProjectDir, ...] = ()
     stale_spawn_artifacts: tuple[StaleSpawnArtifact, ...] = ()
@@ -94,6 +117,7 @@ class DoctorOutput(BaseModel):
     warnings: tuple["DoctorWarning", ...] = ()
     repaired: tuple[str, ...] = ()
     legacy_pi_sessions: str | None = None
+    legacy_spawn_rows: str | None = None
     killed_orphan_spawns: tuple[str, ...] = ()
     # The sync daemon, when this project has git contexts.
     autosync: str | None = None
@@ -108,18 +132,15 @@ class DoctorOutput(BaseModel):
             ("project_root_source", self.project_root_source),
             ("identity_tier", self.identity_tier),
             ("project_id", self.project_id or "(unminted)"),
-            ("mars_roots.primary", self.mars_roots.primary.as_posix()),
-            ("mars_roots.scope", self.mars_roots.scope),
-            (
-                "mars_roots.user",
-                self.mars_roots.user.as_posix() if self.mars_roots.user is not None else None,
-            ),
+            ("mars_roots.primary", self.mars_roots.primary or "(unknown: Mars did not answer)"),
+            ("mars_roots.scope", self.mars_roots.scope or "(unknown: Mars did not answer)"),
+            ("mars_roots.user", self.mars_roots.user),
             ("project_state", "available" if self.runtime_root is not None else "no state here"),
             ("runtime_root", self.runtime_root or "(unmaterialized)"),
             ("runtime_root_source", self.runtime_root_source),
             ("runs_checked", str(self.runs_checked)),
-            ("agents_dir", self.agents_dir),
-            ("skills_dir", self.skills_dir),
+            ("agents_dir", self.agents_dir or "(unknown: Mars did not answer)"),
+            ("skills_dir", self.skills_dir or "(unknown: Mars did not answer)"),
             ("orphan_project_dirs", str(len(self.orphan_project_dirs))),
             ("adhoc_project_dirs", str(len(self.adhoc_project_dirs))),
             ("stale_spawn_artifacts", str(len(self.stale_spawn_artifacts))),
@@ -147,6 +168,8 @@ class DoctorOutput(BaseModel):
         result = kv_block(pairs)
         if self.legacy_pi_sessions:
             result += f"\nlegacy_pi_sessions: {self.legacy_pi_sessions}"
+        if self.legacy_spawn_rows:
+            result += f"\nlegacy_spawn_rows: {self.legacy_spawn_rows}"
         for warning in self.warnings:
             result += f"\nwarning: {warning.code}: {warning.message}"
         for candidate in self.adhoc_project_dirs:
@@ -180,6 +203,7 @@ class LocalReport:
     warnings: tuple[DoctorWarning, ...] = ()
     repaired: tuple[str, ...] = ()
     legacy_pi_sessions: str | None = None
+    legacy_spawn_rows: str | None = None
     killed_orphan_spawns: tuple[str, ...] = ()
 
 
@@ -216,6 +240,14 @@ def _check_legacy_worktree_temp(runtime_root: Path) -> DoctorWarning | None:
         ),
         payload={"path": legacy_temp_dir.as_posix()},
     )
+
+
+def _legacy_rows_summary(rewritten: tuple[LegacyRow, ...]) -> str | None:
+    if not rewritten:
+        return None
+    shown = ", ".join(f"{row.spawn_id} ({', '.join(row.changed)})" for row in rewritten[:10])
+    more = f", and {len(rewritten) - 10} more" if len(rewritten) > 10 else ""
+    return f"rewrote {len(rewritten)} spawn row(s) an older Meridian wrote: {shown}{more}"
 
 
 def _repair_stale_session_locks(
@@ -346,11 +378,15 @@ def schedule_background_repairs(project_root: Path, *, repair_orphans: bool = Tr
             except UnsupportedSessionFormat as exc:
                 logger.debug("legacy_pi_recovery_skipped", error=str(exc))
         with suppress(Exception):
-            dogfood = migrate_dogfood_spawn_rows(runtime_root)
-            if dogfood.failed:
-                logger.warning("dogfood_spawn_rows_failed", failed=dict(dogfood.failed))
-            if dogfood.index_rearm_warning:
-                logger.warning("dogfood_index_rearm_failed", warning=dogfood.index_rearm_warning)
+            if not (runtime_root / LEGACY_ROWS_MARKER).exists():
+                legacy = repair_legacy_spawn_rows(runtime_root)
+                if legacy.failed:
+                    logger.warning(
+                        "legacy_spawn_rows_failed",
+                        failed={row.spawn_id: row.reason for row in legacy.failed},
+                    )
+                if legacy.index_rearm_warning:
+                    logger.warning("dogfood_index_rearm_failed", warning=legacy.index_rearm_warning)
         with suppress(Exception):
             _repair_stale_session_locks(project_root, runtime_root=runtime_root)
             gc_orphaned_locks(runtime_root)
@@ -412,29 +448,78 @@ def _doctor_local(
                 f"; inspect one with `meridian session repair cN` (e.g. {pi_recovery.unbound[0]})"
             )
 
-    dogfood = migrate_dogfood_spawn_rows(runtime_root)
-    if dogfood.migrated:
+    # Unlike the startup pass, doctor ignores the marker: the read warning sends people here.
+    legacy = repair_legacy_spawn_rows(runtime_root)
+    changes = {change for row in legacy.rewritten for change in row.changed}
+    if "dogfood fields" in changes:
         repaired.append("dogfood_spawn_rows")
-    if dogfood.failed:
+    if changes - {"dogfood fields"}:
+        repaired.append("legacy_spawn_rows")
+    legacy_rows_summary = _legacy_rows_summary(legacy.rewritten)
+    dogfood_failed = tuple(row for row in legacy.failed if row.dogfood)
+    if dogfood_failed:
         warnings.append(
             DoctorWarning(
                 code="dogfood_spawn_rows_failed",
                 message=(
-                    f"{len(dogfood.failed)} dogfood spawn row(s) could not be migrated "
+                    f"{len(dogfood_failed)} dogfood spawn row(s) could not be migrated "
                     "and stay quarantined: "
-                    + "; ".join(f"{spawn_id} ({reason})" for spawn_id, reason in dogfood.failed)
+                    + "; ".join(f"{row.spawn_id} ({row.reason})" for row in dogfood_failed)
                 ),
                 payload={
-                    "spawn_ids": [spawn_id for spawn_id, _ in dogfood.failed],
-                    "reasons": dict(dogfood.failed),
+                    "spawn_ids": [row.spawn_id for row in dogfood_failed],
+                    "reasons": {row.spawn_id: row.reason for row in dogfood_failed},
                 },
             )
         )
-    if dogfood.index_rearm_warning:
+    legacy_failed = tuple(row for row in legacy.failed if not row.dogfood)
+    if legacy_failed:
+        warnings.append(
+            DoctorWarning(
+                code="legacy_spawn_rows_failed",
+                message=(
+                    f"{len(legacy_failed)} spawn row(s) an older Meridian wrote could not be "
+                    "rewritten in the current format and were left as they are: "
+                    + "; ".join(f"{row.spawn_id} ({row.reason})" for row in legacy_failed)
+                ),
+                payload={
+                    "spawn_ids": [row.spawn_id for row in legacy_failed],
+                    "reasons": {row.spawn_id: row.reason for row in legacy_failed},
+                },
+            )
+        )
+    if legacy.deferred:
+        warnings.append(
+            DoctorWarning(
+                code="legacy_spawn_rows_deferred",
+                message=(
+                    f"{len(legacy.deferred)} spawn row(s) without a launch lock (mostly from "
+                    "before 0.10.18) may still have a runner from an older Meridian; run "
+                    "`meridian doctor` again after it exits to finish them: "
+                    + ", ".join(row.spawn_id for row in legacy.deferred)
+                ),
+                payload={"spawn_ids": [row.spawn_id for row in legacy.deferred]},
+            )
+        )
+    if legacy.unsettled:
+        warnings.append(
+            DoctorWarning(
+                code="legacy_spawn_rows_unsettled",
+                message=(
+                    f"{len(legacy.unsettled)} spawn row(s) without a launch lock (mostly from "
+                    "before 0.10.18) are still active with no outcome, and their runner is "
+                    "gone; Meridian does not record an outcome for them on its own. "
+                    "`meridian spawn cancel <id>` records it, and the next `meridian doctor` "
+                    "finishes the rewrite: " + ", ".join(row.spawn_id for row in legacy.unsettled)
+                ),
+                payload={"spawn_ids": [row.spawn_id for row in legacy.unsettled]},
+            )
+        )
+    if legacy.index_rearm_warning:
         warnings.append(
             DoctorWarning(
                 code="dogfood_index_rearm_failed",
-                message=dogfood.index_rearm_warning,
+                message=legacy.index_rearm_warning,
             )
         )
 
@@ -560,11 +645,15 @@ def _doctor_local(
     derived = overlay_derived(runtime_root, spawns)
     running = [row.id for row in derived if is_active_spawn_status(row.status)]
     # Stored-active but derived-terminal: the runner is gone and no outcome is
-    # persisted yet. Readers already show the crash; --kill-orphans writes it.
+    # persisted yet. Readers already show the crash; --kill-orphans writes it, except
+    # for lockless rows, which legacy_spawn_rows_unsettled names with what does.
+    unsettled = {row.spawn_id for row in legacy.unsettled}
     unpersisted = [
         row.id
         for row, stored in zip(derived, spawns, strict=True)
-        if is_active_spawn_status(stored.status) and not is_active_spawn_status(row.status)
+        if is_active_spawn_status(stored.status)
+        and not is_active_spawn_status(row.status)
+        and row.id not in unsettled
     ]
     if unpersisted:
         warnings.append(
@@ -604,6 +693,7 @@ def _doctor_local(
         warnings=tuple(warnings),
         repaired=tuple(repaired),
         legacy_pi_sessions=legacy_pi_summary,
+        legacy_spawn_rows=legacy_rows_summary,
         killed_orphan_spawns=killed_orphan_spawns,
     )
 
@@ -684,6 +774,9 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
     authority = resolve_runtime_authority_for_read(payload.project_root)
     surface = build_config_surface(authority)
     project_root = surface.project_root
+    # Loading the hook rows prints their config warnings (a skipped old row, an ignored
+    # key) on stderr, where someone upgrading looks for what to clean up.
+    load_hooks_config_report(project_root, authority=authority)
     runtime_root = (
         authority.runtime_root
         if authority.runtime_root is not None and authority.runtime_root.is_dir()
@@ -718,19 +811,10 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
         else GlobalReport()
     )
 
-    mars_roots = authority.mars_roots
-    agents_dir = mars_roots.primary / ".mars" / "agents"
-    skills_dir = mars_roots.primary / ".mars" / "skills"
-    agents_dirs = [
-        root / ".mars" / "agents"
-        for root in mars_content_roots(mars_roots)
-        if (root / ".mars" / "agents").is_dir()
-    ]
-    skills_dirs = [
-        root / ".mars" / "skills"
-        for root in mars_content_roots(mars_roots)
-        if (root / ".mars" / "skills").is_dir()
-    ]
+    # The legacy root's warning prints once, as doctor's finding, not again from this lookup.
+    mark_legacy_user_root_reported()
+    mars = mars_root_report(project_root)
+    store = mars.root.store if mars.root is not None else None
 
     warnings = [*local_report.warnings, *global_report.warnings]
     if surface.warning is not None:
@@ -748,22 +832,17 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
                 payload=finding.payload,
             )
         )
-    mars_marker_exists = (mars_roots.primary / "mars.toml").is_file()
-    if mars_marker_exists and not skills_dirs:
+    if (legacy := legacy_user_root()) is not None:
         warnings.append(
             DoctorWarning(
-                code="missing_skills_directories",
-                message="No configured skills directories were found.",
+                code="legacy_user_mars_root",
+                message=legacy_user_root_message(legacy),
+                payload={"path": legacy.as_posix()},
             )
         )
-    if mars_marker_exists and not agents_dirs:
-        warnings.append(
-            DoctorWarning(
-                code="missing_agent_profile_directories",
-                message="No configured agent profile directories were found.",
-            )
-        )
-    if mars_marker_exists:
+    if mars.error is not None:
+        warnings.append(DoctorWarning(code="mars_unavailable", message=mars.error))
+    if mars.root is not None and mars.root.kind == "project":
         availability = check_upgrade_availability(project_root)
         if availability is None:
             warnings.append(
@@ -807,12 +886,17 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
         project_root_source=surface.authority.project_root_source,
         identity_tier=authority.identity_tier,
         project_id=authority.project_id,
-        mars_roots=authority.mars_roots,
+        mars=mars.root,
+        mars_roots=DoctorMarsRoots(
+            primary=mars.root.path.as_posix() if mars.root is not None else None,
+            scope=mars.root.kind if mars.root is not None else None,
+            user=mars.user_root.as_posix() if mars.user_root is not None else None,
+        ),
         runtime_root=runtime_root.as_posix() if runtime_root is not None else None,
         runtime_root_source=authority.runtime_root_source or "unresolved",
         runs_checked=len(local_report.spawns),
-        agents_dir=agents_dir.as_posix(),
-        skills_dir=skills_dir.as_posix(),
+        agents_dir=(store / "agents").as_posix() if store is not None else None,
+        skills_dir=(store / "skills").as_posix() if store is not None else None,
         orphan_project_dirs=global_report.orphan_project_dirs,
         adhoc_project_dirs=global_report.adhoc_project_dirs,
         stale_spawn_artifacts=local_report.stale_spawn_artifacts,
@@ -824,6 +908,7 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
         warnings=tuple(warnings),
         repaired=repaired,
         legacy_pi_sessions=local_report.legacy_pi_sessions,
+        legacy_spawn_rows=local_report.legacy_spawn_rows,
         killed_orphan_spawns=local_report.killed_orphan_spawns,
         autosync=autosync_status,
     )

@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from meridian.lib.catalog.mars_roots import MarsAgentNotFoundError
+from meridian.lib.catalog.mars_cli import MarsAgentNotFoundError
 from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.core.domain import AvailableSkillEntry
 from meridian.lib.core.permission_policy import (
@@ -171,6 +171,7 @@ def _direct_prepared_surface(
         primary_mode=False,
         has_spawn_capability=False,
         model_selection=None,
+        native_agent_copy=False,
         launch_request=resolved_request,
     )
 

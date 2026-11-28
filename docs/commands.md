@@ -715,9 +715,6 @@ prints each conflicting file with both sides.
 | `meridian sync service install` | Install the user service and start it; also repairs a missing unit, a moved install or a stopped daemon, and undoes `uninstall`. Works for any install and home (a non-default home gets its own service name) |
 | `meridian sync service uninstall` | Stop and remove the user service and write `autosync/service.off`, so a later launch doesn't install it again |
 
-`meridian sync conflict list|show|resolve` were removed; for one minor release `list` prints
-a pointer and no conflicts, and `show` and `resolve` print it and exit 1.
-
 A clone is `stopped` when its last pass conflicted or left the default branch, when passes
 have failed for 15 minutes, or when its worker reported nothing for 15 minutes.
 
@@ -916,15 +913,20 @@ only. Those events are not visible through `tail`, `query`, or `status`.
 | `meridian mars init [--link DIR]` | Initialize mars project (`mars.toml`) and optionally create the initial link target in the same command |
 | `meridian mars add SOURCE` | Add an agent/skill package source |
 | `meridian mars remove NAME` | Remove a dependency and prune its installed items |
-| `meridian mars sync` | Compile packages into `.mars/`; materialize configured harness targets. Keeps each dependency at its locked version and names the ones with a newer release; `upgrade` moves them |
+| `meridian mars sync` | Compile packages and your user-level items into `.mars/`; materialize configured harness targets. Passes Meridian's bundle as `--provided-root meridian@<version>=<dir>`, so `.agy` gets Meridian's skills; every other command that syncs (`add`, `link`, `upgrade`, …) passes it too. Keeps each dependency at its locked version and names the ones with a newer release; `upgrade` moves them |
 | `meridian mars link DIR` | Link compiled output into a harness tool directory |
 | `meridian mars unlink DIR` | Remove a link target |
 | `meridian mars list` | Show installed agents, skills, and bootstrap docs by name and description |
 | `meridian mars upgrade [NAME]` | Move dependencies to their newest compatible release and sync. The only command that does |
 | `meridian mars check [PATH]` | Validate a package's schema, structure, and plugin output |
-| `meridian mars provide <provider>@<version>=<dir>` | Install a host's own skills under `.mars/skills/`; `meridian mars sync` runs it for Meridian's bundle |
 | `meridian mars repair` | Rebuild managed state from config and dependencies |
 | `meridian mars doctor` | Check for drift and integrity issues |
+
+`meridian mars --user <command>` runs a command against your Mars user level (forwarded as
+`mars --user`; needs Mars 0.41.0 or newer). Without `--user` or `--root`, Mars runs in the
+working directory and chooses the root from Meridian's project (as `--root` when the working
+directory is outside it): the nearest `mars.toml`, and for lookups the user level when there is
+none. See [Mars configuration](configuration/mars.md#user-packages-and-bare-directories).
 
 Mars also has `adopt`, `override`, `rename`, `resolve`, `outdated`, `why`, `cache`,
 `version`, `build`, `validate`, `export`, `agents`, and `skills`; run `meridian mars <command> --help`, or read Mars's
@@ -951,11 +953,16 @@ hooks, harness defaults, and primary-session defaults.
 - without `mars.toml`, it shells through `meridian mars init --link DIR`
 - with `mars.toml`, it shells through `meridian mars link DIR`
 
+Both run `mars init` before writing `meridian.toml`. Mars refuses your home directory, which
+is never a project, so init leaves home unchanged and prints Mars's message pointing at
+`meridian mars --user add`. Any Mars error during init is printed before it exits with Mars's
+code.
+
 `meridian bootstrap --add ... --link ...` runs this same setup flow, then launches a guided bootstrap primary session.
 
 Meridian CLI processes default `MERIDIAN_MANAGED=1` in their environment, while preserving an explicit outer override. Mars uses this signal to suppress native agent emission to harness directories — agents are read by Meridian from `.mars/agents/`, not duplicated into `.claude/agents/` etc. `[settings.meridian.agent_copy] harnesses = ["claude"]` is the selective override when `.claude` is an effective managed target; it materializes qualifying Claude-native copies even under managed mode or `agent_emission = "never"`.
 
-In Claude launches, native `Agent()` follows that same boundary: generic `Agent` is allowed only when Mars installed at least one agent into `.claude` (recorded in `.mars/native-agents.json` by the last sync, whatever caused it: `agent_copy` in any Mars config layer, `agent_emission = "always"`, or a bare `mars sync` run outside Meridian). Without it, use `meridian spawn`. Claude built-ins (`Explore`, `Plan`, `General-purpose` / `general-purpose`) stay denied.
+In Claude launches, native `Agent()` follows that same boundary: generic `Agent` is allowed only when Mars installed at least one agent into `.claude` (`mars agents list` reports it from the last sync, whatever caused it: `agent_copy` in any Mars config layer, `agent_emission = "always"`, or a bare `mars sync` run outside Meridian). Without it, use `meridian spawn`. Claude built-ins (`Explore`, `Plan`, `General-purpose` / `general-purpose`) stay denied.
 
 Headless Claude spawns are allowed by default. To prevent `meridian spawn -a <agent>` from launching them, set:
 
@@ -971,18 +978,10 @@ See [agent-profiles.md](agent-profiles.md) for the agent profile format includin
 
 ### Bundled Meridian skills
 
-`meridian skills list` shows the operational skills shipped with Meridian and does
-not create or update `.mars/`. `meridian skills NAME [RESOURCE-PATH]` reads one.
-In a project with `mars.toml`, the named read first asks Mars to install the current
-bundle under `.mars/skills/` (`mars provide`); it reads only names Mars reports as
-provided and falls back to the wheel when Mars cannot provide them (a Mars older than
-0.20 has no `mars provide`; a held lock; an interrupted sync, which `meridian mars sync`
-recovers; a bundle Mars refuses) or their installed `SKILL.md` is missing or invalid. Unknown names are rejected before asking Mars to provide. In a
-bare directory it reads the wheel without initializing the user Mars root.
-
-The rendered skill body is the same from either source. Its `Files:` line names the
-directory actually read, so a Mars-provided skill points at
-`<project>/.mars/skills/<name>/` and its resource reads use that same copy.
+`meridian skills list` shows the operational skills shipped with Meridian.
+`meridian skills NAME [RESOURCE-PATH]` reads one. Both read the installed Meridian package
+only: they run no Mars command and never create or update `.mars/`, in a project or not. The
+rendered skill's `Files:` line names that package directory. Unknown names are rejected.
 
 ## Spawn Statuses
 

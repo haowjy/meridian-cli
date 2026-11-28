@@ -19,6 +19,7 @@ from meridian.lib.launch.context import (
     prepare_launch_surface,
 )
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
+from meridian.lib.ops.mars import try_mars_agent_inventory
 
 
 def compose_spawn_launch_surface(
@@ -43,18 +44,21 @@ def compose_spawn_launch_surface(
         execution_cwd=resolved_requested_task_cwd,
     )
     catalog = CatalogSession(project_paths.project_root, cache=cache)
+    mars_agents = try_mars_agent_inventory(project_paths.project_root)
     prepared_policy = compile_prepared_policy_surface(
         request=request,
         runtime=runtime,
         project_root=project_paths.project_root,
         harness_registry=harness_registry,
         catalog=catalog,
+        mars_agents=mars_agents,
         dry_run=dry_run,
     )
     return prepare_launch_surface(
         request=request,
         runtime=runtime,
         prepared_policy=prepared_policy,
+        mars_agents=mars_agents,
     )
 
 

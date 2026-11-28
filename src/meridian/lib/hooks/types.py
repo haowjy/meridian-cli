@@ -91,11 +91,7 @@ class Hook:
     priority: int = 0
     require_serial: bool = False
     when: HookWhen | None = None
-    exclude: tuple[str, ...] = ()
     options: Mapping[str, object] = field(default_factory=_default_options)
-    # Legacy field kept for backward compatibility.
-    # Builtins should prefer config.options.
-    remote: str | None = None
 
 
 __all__ = [

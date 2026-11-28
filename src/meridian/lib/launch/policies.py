@@ -6,7 +6,7 @@ from pathlib import Path
 
 from meridian.lib.catalog.agent import AgentProfile, parse_agent_profile
 from meridian.lib.catalog.catalog_session import CatalogSession
-from meridian.lib.catalog.mars_roots import MarsAgentNotFoundError, resolve_mars_roots
+from meridian.lib.catalog.mars_cli import MarsAgentNotFoundError
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.agent_routing import configured_agent_routing
 from meridian.lib.config.models import MeridianConfig
@@ -27,6 +27,7 @@ from meridian.lib.core.tools import PLATFORM_ORIGIN, PROJECT_ORIGIN, ToolRule
 from meridian.lib.core.types import PLUGIN_HOSTED, HarnessId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.registry import HarnessRegistry
+from meridian.lib.ops.mars import MarsAgentInventory
 
 from . import bundle_adapter
 from .bundle_adapter import LoadedSkillEntry
@@ -63,25 +64,17 @@ def _build_resolved_skills_from_bundle(
     loaded_entries: tuple[LoadedSkillEntry, ...],
     *,
     missing: tuple[str, ...],
-    project_root: Path,
 ) -> ResolvedSkills:
-    mars_root = resolve_mars_roots(project_root).primary
     loaded_skills: list[SkillContent] = []
     for entry in loaded_entries:
         if not entry.body:
             continue
-        # Older bundle schema-4 producers omitted source_path. Keep the
-        # reconstructed primary path only as their compatibility fallback.
-        source_path = (
-            entry.source_path
-            or (mars_root / ".mars" / "skills" / entry.name / "SKILL.md").as_posix()
-        )
         loaded_skills.append(
             SkillContent(
                 name=entry.name,
                 description="",
                 content=entry.body,
-                path=source_path,
+                path=entry.source_path,
                 skill_type=entry.skill_type,
             )
         )
@@ -111,6 +104,9 @@ class SurfacePolicyInput:
 
     surface: LaunchCompositionSurface
     catalog: CatalogSession
+    # One `mars agents list` per launch, shared with `prepare_launch_surface`; None when
+    # Mars cannot answer.
+    mars_agents: MarsAgentInventory | None
     layers: tuple[RuntimeOverrides, ...]
     config_overrides: RuntimeOverrides
     config: MeridianConfig
@@ -417,7 +413,8 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         profile_warning = (
             f"Configured agent profile '{agent}' is unavailable; running without an agent profile."
         )
-        routing, alias_catalog, bundle_result = ask_for_bundle(None)
+        agent = None
+        routing, alias_catalog, bundle_result = ask_for_bundle(agent)
     profile = (
         parse_agent_profile(Path(bundle_result.agent_source_path).expanduser())
         if bundle_result.agent_source_path is not None
@@ -427,8 +424,6 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
     profile_overrides = RuntimeOverrides(
         resident_rearm_budget=None if profile is None else profile.resident_rearm_budget
     )
-    full_layers = (*surface.layers, profile_overrides, surface.config_overrides)
-    base_resolved = resolve(*full_layers)
 
     resolved_model = bundle_result.model
     resolved_harness = bundle_result.harness
@@ -484,7 +479,6 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
     resolved_skills = _build_resolved_skills_from_bundle(
         bundle_result.skills_loaded,
         missing=bundle_result.skills_missing,
-        project_root=project_root,
     )
 
     bundle_model_warning = (
@@ -561,7 +555,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         resolved_model=resolved_model,
         resolved_harness=resolved_harness,
         routing_model=model_selection.selected_model_token,
-        routing_agent=base_resolved.agent,
+        routing_agent=agent,
         execution_policy=resolved_execution_policy,
         warnings=tuple(policy_warnings),
         alias_catalog=alias_catalog,
@@ -585,6 +579,7 @@ def _resolve_policy_from_snapshot(
         project_root=surface.catalog.project_root,
         harness_registry=surface.harness_registry,
         alias_catalog=surface.catalog.alias_map(no_refresh_models=surface.models_readonly),
+        mars_root=surface.mars_agents.root if surface.mars_agents is not None else None,
     )
     execution_policy = replayed.execution_policy.model_copy(
         update={

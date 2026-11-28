@@ -47,11 +47,7 @@ def test_mars_passthrough_streams_and_propagates_exit_with_meridian_env(
 
     env = os.environ.copy()
     env["MARS_RECORD"] = str(record_path)
-    meridian_home = tmp_path / "meridian-home"
-    user_mars_root = meridian_home / "mars"
-    user_mars_root.mkdir(parents=True)
-    (user_mars_root / "mars.toml").write_text("", encoding="utf-8")
-    env["MERIDIAN_HOME"] = str(meridian_home)
+    env["MERIDIAN_HOME"] = str(tmp_path / "meridian-home")
     env["_MERIDIAN_DEPTH"] = "1"
     env.pop("MERIDIAN_MANAGED", None)
     env.pop("MERIDIAN_PROJECT_DIR", None)
@@ -69,7 +65,7 @@ def test_mars_passthrough_streams_and_propagates_exit_with_meridian_env(
     assert result.stdout == "mars stdout\n"
     assert result.stderr == "mars stderr\n"
     assert json.loads(record_path.read_text()) == {
-        "argv": ["models", "list", "--root", user_mars_root.as_posix()],
+        "argv": ["models", "list"],
         "managed": "1",
         "version": __version__,
     }
@@ -130,45 +126,53 @@ def test_init_link_creates_nested_project_below_ancestor_mars_root(
     assert (nested / ".claude").is_dir()
 
 
-def test_mutation_gate_uses_meridian_project_dir_before_root_injection(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from meridian.cli.mars_passthrough import parse_mars_passthrough
+@pytest.mark.integration
+@posix_only
+def test_writes_outside_a_project_need_user_and_reach_the_user_level(tmp_path: Path) -> None:
+    from meridian.lib.catalog.mars_cli import resolve_mars_executable
 
+    if resolve_mars_executable() is None:
+        pytest.skip("mars binary not available")
     bare = tmp_path / "bare"
-    bare.mkdir()
-    monkeypatch.setenv("MERIDIAN_PROJECT_DIR", bare.as_posix())
-    monkeypatch.setenv("MERIDIAN_HOME", (tmp_path / "user-home").as_posix())
-
-    with pytest.raises(ValueError) as exc_info:
-        parse_mars_passthrough(["add", "local-package"], executable="/fake/mars")
-
-    assert str(exc_info.value) == (
-        "no project Mars root here; run 'meridian init --link', or use 'meridian mars --user …'"
+    elsewhere = tmp_path / "elsewhere"
+    package = tmp_path / "package" / "skills" / "hello"
+    for directory in (bare, elsewhere, package):
+        directory.mkdir(parents=True)
+    (package / "SKILL.md").write_text(
+        "---\nname: hello\ndescription: Hello.\n---\nHello.\n", encoding="utf-8"
     )
+    mars_home = tmp_path / "mars-home"
+    env = {
+        **os.environ,
+        "HOME": (tmp_path / "home").as_posix(),
+        "MERIDIAN_HOME": (tmp_path / "meridian-home").as_posix(),
+        "MARS_HOME": mars_home.as_posix(),
+        # Meridian's directory, not the shell's, decides where Mars looks for a project.
+        "MERIDIAN_PROJECT_DIR": bare.as_posix(),
+    }
+
+    def meridian_mars(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-m", "meridian", "mars", *args],
+            cwd=elsewhere,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+
+    # `add` would create a project here; Meridian refuses before Mars runs it.
+    refused_add = meridian_mars("add", (tmp_path / "package").as_posix())
+    assert refused_add.returncode == 1
+    assert "no project Mars root here" in refused_add.stderr
+    # Every other write Mars refuses itself, naming --user.
+    refused_alias = meridian_mars("models", "alias", "fast", "gpt-5")
+    assert refused_alias.returncode != 0
+    assert "--user" in refused_alias.stderr
     assert not any(bare.iterdir())
 
-
-def test_nested_mutation_gate_requires_user_scope_in_bare_directory(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from meridian.cli.mars_passthrough import parse_mars_passthrough
-
-    bare = tmp_path / "bare"
-    bare.mkdir()
-    user_root = tmp_path / "user-home" / "mars"
-    monkeypatch.chdir(bare)
-    monkeypatch.delenv("MERIDIAN_PROJECT_DIR", raising=False)
-    monkeypatch.setenv("MERIDIAN_HOME", user_root.parent.as_posix())
-
-    with pytest.raises(ValueError, match="no project Mars root here"):
-        parse_mars_passthrough(["models", "alias", "fast", "gpt-5"], executable="/fake/mars")
-
-    request = parse_mars_passthrough(
-        ["--user", "models", "alias", "fast", "gpt-5"], executable="/fake/mars"
-    )
-    assert request.mars_args[-2:] == ("--root", user_root.as_posix())
-    assert request.user_scope
+    added = meridian_mars("--user", "add", (tmp_path / "package").as_posix())
+    assert added.returncode == 0, added.stderr
+    assert (mars_home / "mars.toml").is_file()
     assert not any(bare.iterdir())

@@ -6,32 +6,64 @@ are build output; do not edit them directly.
 
 ## User packages and bare directories
 
-User packages live in the ordinary Mars project at `~/.meridian/mars`. Populate
-and compile it explicitly:
+Packages you install for yourself live at the Mars user level, `~/.mars/`: its `mars.toml`,
+`config.toml` and store are all in that one folder (`MARS_HOME` moves it; see the
+[Mars user-level guide](https://github.com/haowjy/mars-agents/blob/main/docs/cli/user-level.md)).
+Add them with `--user`:
 
 ```bash
 meridian mars --user add haowjy/meridian-base
 meridian mars --user sync
 ```
 
-In a directory without a project `mars.toml`, Meridian uses this user root for
-agents, skills, aliases, models, and launch defaults. With no `targets` configured,
-the user root permits every installed harness. A project Mars root remains
-authoritative for routing config and package content takes precedence over user
-content.
+`meridian mars --user …` forwards `mars --user …`; it needs Mars 0.41.0 or newer, and
+Meridian says so before forwarding when the Mars it runs is older.
 
-Inside a project Mars root, user packages are fallback content for agents and
-skills only. Model aliases still resolve from the project's Mars config. If a
-user agent depends on an alias that the project does not define, add its package
-to the project with `meridian mars add <source>` or pass `--model`.
-`meridian config show` and `meridian context` report `mars_fallback` as `active`
-inside a project Mars root and `n/a` when the user root is already primary.
+Mars chooses the root, not Meridian. Meridian runs Mars in your working directory, so a
+relative path you type resolves from there. When Meridian's project (`-C` or
+`MERIDIAN_PROJECT_DIR`) does not contain the working directory, for example an agent in a
+worktree, Meridian passes it as `--root`, which only starts Mars's walk-up; a `--root` or
+`--user` you type is forwarded instead. Lookups (launches, `mars agents`, `mars skills`, `mars models`)
+use the nearest project `mars.toml`, and the user level when there is none. The user level has
+no `targets`, so it permits every harness. Your home directory's `mars.toml` is never a project,
+and a Meridian project that is exactly your home directory is not passed as `--root`.
 
-Package mutations without `--user` require a project Mars root; so do `migrate` (except
-`migrate --check`, which only reports) and `provide`. In a bare
-directory they fail before Mars can create a marker. `meridian mars init` is the
-explicit exception: it writes only `mars.toml`; the next Meridian runtime write
-mints the committed `[project] id` in `meridian.toml`.
+Inside a project, user-level items are installed by the project's own `meridian mars sync`,
+beside its packages and kept out of its commits; an item of the same name from the project's
+packages wins. Model aliases and routing config come from the project's Mars config.
+`meridian config show`, `meridian context` and `meridian doctor` report the root Mars chose as
+`mars` (`kind` and `path`; the user level's store and `config.toml` are in its `path`).
+
+Writes without `--user` need a project. `meridian mars add` and `link` would create one where
+there is none, so Meridian refuses them when Mars reports `project_not_found` there; every
+other write Mars refuses itself, with a message naming `--user`. `meridian mars init` is the explicit way to start a project: it writes
+only `mars.toml`; the next Meridian runtime write mints the committed `[project] id` in
+`meridian.toml`.
+
+Every `meridian mars` command that syncs (`sync`, `add`, `remove`, `upgrade`, `repair`,
+`rename`, `override`, `adopt`, `link`, `validate`), and `meridian init`'s `add` and
+`link`, passes Meridian's own bundle to the sync as
+`--provided-root meridian@<version>=<dir>`, so targets no harness Meridian launches (`.agy`)
+get Meridian's skills; Mars keeps that layer on later syncs.
+`meridian mars --user` passes it to the same commands. The user level installs nothing from
+it, but since Mars 0.41.1 counts a host's skills for every agent, a user-level `sync` or
+`validate` doesn't report a user-level agent that names a Meridian skill such as
+`work__meridian` as missing it.
+Launches read the bundle in place.
+
+Mars runs in your working directory and takes the nearest `mars.toml` above it. Inside a
+project with a nested `mars.toml` (a package checkout under it), that nested one is the Mars
+root, while Meridian's state and work items stay with the outer project.
+
+### `~/.meridian/mars`
+
+Before the Mars user level, Meridian kept user packages in its own Mars project at
+`~/.meridian/mars`. Meridian never deletes or writes it. For one minor release, while the folder
+exists, lookups still read it (as Mars's deprecated `--fallback-root`), each command warns once,
+and `meridian doctor` reports it as `legacy_user_mars_root`. The next minor release stops
+reading it. To move it, and any older Mars layout, into the user level, run the
+[migration script](../upgrading.md#mars-chooses-the-root-meridianmars-retires): a dry run on its
+own, `--apply` to move.
 
 ## What a package installs
 
@@ -111,8 +143,8 @@ The former `agent_copy` fan-out allowlist key is removed. If present in
 
 For Claude launches, Meridian uses the same boundary for native `Agent()`
 delegation. Generic Claude `Agent` is allowed only when the last sync actually
-installed at least one agent into Claude's native directory, as recorded in
-`.mars/native-agents.json`. That covers `agent_copy` in any Mars config layer
+installed at least one agent into Claude's native directory, as `mars agents list`
+reports (`native-harnesses`). That covers `agent_copy` in any Mars config layer
 (including the user `config.toml`), `agent_emission = "always"`, and a bare
 `mars sync` run outside Meridian. Otherwise the launch denies native `Agent` and
 guides delegation back to `meridian spawn`. Claude built-in agents (`Explore`,

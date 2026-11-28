@@ -516,28 +516,6 @@ def startup_notices(project_root: Path, registration: autosync.Registration) -> 
     return notices
 
 
-class ConflictRemovedOutput(BaseModel):
-    """What `meridian sync conflict ...` prints until the next minor release removes it."""
-
-    model_config = ConfigDict(frozen=True)
-
-    removed: bool = True
-    # What `list` returned: always none, so a script's loop over it does nothing.
-    conflicts: tuple[()] = ()
-    message: str = (
-        "`meridian sync conflict` was removed and will be dropped from the next minor release. "
-        "A conflict now stops the clone: see it with `meridian sync status`, then run "
-        "`meridian sync now <context>` to see both sides, resolve them, and run it again."
-    )
-
-    def format_text(self, ctx: FormatContext | None = None) -> str:
-        return self.message
-
-
-def conflict_removed_sync() -> ConflictRemovedOutput:
-    return ConflictRemovedOutput()
-
-
 def doctor_findings(root: Path) -> tuple[str | None, list[tuple[str, str]]]:
     """`meridian doctor`'s view of autosync: a one-line status (`None` when the project has
     no git contexts) and `(code, message)` problems, all read from the clone rows."""

@@ -61,7 +61,7 @@ class HookConfigLoad:
 
 
 def _hooks_from_payload(
-    payload: dict[str, object], *, source: str
+    payload: dict[str, object], *, source: str, file: Path
 ) -> tuple[tuple[Hook, ...], tuple[str, ...]]:
     hooks: list[Hook] = []
     errors: list[str] = []
@@ -78,13 +78,10 @@ def _hooks_from_payload(
     for index, raw_row in enumerate(rows, start=1):
         row_source = f"{source}.hooks[{index}]"
         try:
-            spec = normalize_hook_row(raw_row, source=row_source)
-            loaded = hooks_from_spec(
-                spec,
-                source=source,
-                row_source=row_source,
-            )
-            hooks.extend(loaded)
+            spec = normalize_hook_row(raw_row, source=row_source, file=file)
+            if spec is None:
+                continue
+            hooks.extend(hooks_from_spec(spec, source=source, row_source=row_source))
         except ValueError as exc:
             errors.append(_named_row_error(raw_row, exc))
     return tuple(hooks), tuple(errors)
@@ -130,8 +127,7 @@ def load_hooks_config_report(
         user_config=user_config,
     ):
         layer_hooks, layer_errors = _hooks_from_payload(
-            layer.payload,
-            source=layer.name,
+            layer.payload, source=layer.name, file=layer.path
         )
         hooks.extend(layer_hooks)
         errors.extend(layer_errors)
@@ -152,7 +148,9 @@ def load_machine_hooks_config_report() -> HookConfigLoad:
     path = resolve_user_config_path(None)
     if path is None:
         return HookConfigLoad(config=HooksConfig(hooks=()))
-    hooks, errors = _hooks_from_payload(read_config_payload(path), source=MACHINE_EVENT_SOURCE)
+    hooks, errors = _hooks_from_payload(
+        read_config_payload(path), source=MACHINE_EVENT_SOURCE, file=path
+    )
     return HookConfigLoad(config=HooksConfig(hooks=_apply_name_overrides(hooks)), errors=errors)
 
 

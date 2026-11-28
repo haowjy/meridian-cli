@@ -15,7 +15,7 @@ from meridian.plugin_api import Hook, HookContext, HookResult, HookOutcome, Spaw
 
 | Export | Purpose |
 | ------ | ------- |
-| `Hook` | Resolved hook record — `name`, `event`, `builtin`, `command`, `options`, `enabled`, `priority`, `require_serial`; `remote` and `exclude` are deprecated, always unused, and removed in the next minor release |
+| `Hook` | Resolved hook record — `name`, `event`, `builtin`, `command`, `options`, `enabled`, `priority`, `require_serial` |
 | `HookContext` | Runtime context passed to a hook at execution time — spawn state, work item, event name, and for `inbox.received` the filed message |
 | `HookResult` | Result for one hook execution — `hook_name`, `event`, `outcome`, `success`, `skipped`, `skip_reason`, `warning`, `error`, `exit_code`, `duration_ms`, `stdout`, `stderr`, `details` |
 | `HookOutcome` | `"success"` \| `"failure"` \| `"timeout"` \| `"skipped"` |

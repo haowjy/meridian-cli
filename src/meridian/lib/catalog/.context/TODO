@@ -1,0 +1,8 @@
+- Review `resolve_model` and `load_mars_descriptions` across CLI, MCP and plugin
+  surfaces before removing unused APIs. `catalog_session.py` calls `resolve_model`.
+- Next minor release after the Mars user level: stop reading `~/.meridian/mars`. Delete
+  `legacy_user_root`, `legacy_user_root_message`, `mark_legacy_user_root_reported` and the
+  URL constants (`mars_cli.py`), the `--fallback-root` and warning in `mars_content_args`,
+  the `legacy_user_mars_root` warning in `ops/diag.py`, and the deprecated JSON fields `mars_fallback` (`config show`, `context`), `mars_user_root`
+  (`context`) and `mars_roots` (`doctor`); `mars` replaces them. Mars drops `--fallback-root`
+  in the same release. `has_project_marker` (`config/project_root.py`) stops excluding it.

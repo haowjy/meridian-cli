@@ -1,8 +1,13 @@
 # Hooks
 
 Runtime dispatch drops and reports invalid rows while preserving valid rows and
-default overrides. Inspection reports all row errors. Notification defaults
-are ordinary lowest-layer rows: a matching disabled row silences delivery.
+default overrides. Inspection reports all row errors. A removed event name or
+`failure_policy` stays in `schema.py`'s `_REMOVED_*` tables after its deprecation window,
+so the row fails naming what to do instead. Config a user may still have from the removed
+`git-autosync` hook is not an error: its row is skipped (`_SKIPPED_BUILTINS`) and `remote`
+and `exclude` are dropped (`HookSpec.config_ignored_keys`), each with a config warning
+that says to delete it, so inspection still exits 0 and the other rows run. Notification
+defaults are ordinary lowest-layer rows: a matching disabled row silences delivery.
 
 External hooks inherit no registered payload variables from the caller; absent
 fields must stay absent rather than carrying another hook's context.
